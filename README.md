@@ -38,3 +38,5 @@ The code will appear as the course progresses and will be divided into parts as 
 ### 6. Neural network
 
 - add neural network
+
+### 7. Visualizing Neural network

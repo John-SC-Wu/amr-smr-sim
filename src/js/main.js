@@ -7,10 +7,10 @@ const mainCtx = mainCanvas.getContext("2d");
 const networkCtx = networkCanvas.getContext("2d");
 
 const road = new Road(mainCanvas.width / 2, mainCanvas.width * 0.9);
-const smr = new SMR(road.getLaneCenter(1), 100, 30, 50, "KEYS");
+const smr = new SMR(road.getLaneCenter(1), 100, 30, 50, "AI");
 const traffic = [new SMR(road.getLaneCenter(1), -100, 30, 50, "DUMMY", 2)];
 
-function animate() {
+function animate(time) {
   for (let i = 0; i < traffic.length; i++) {
     traffic[i].update(road.borders, []);
   }
@@ -29,6 +29,9 @@ function animate() {
   smr.draw(mainCtx, "blue");
 
   mainCtx.restore();
+
+  networkCtx.lineDashOffset = -time / 50;
+  Visualizer.drawNetwork(networkCtx, smr.brain);
 
   requestAnimationFrame(animate);
 }
