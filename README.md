@@ -11,7 +11,6 @@ The code will appear as the course progresses and will be divided into parts as 
 7. Visualizing neural networks
 8. Optimizing neural networks
 9. Fine-tuning
-10. Live stream variant
 
 ### 1. SMR movement mechanics
 
@@ -42,3 +41,5 @@ The code will appear as the course progresses and will be divided into parts as 
 ### 7. Visualizing Neural network
 
 ### 8. Optimizing Neural network
+
+### 9. Fine-tuning
