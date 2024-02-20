@@ -34,7 +34,6 @@ class SMR {
       );
       const outputs = NeuralNetwork.feedForward(offsets, this.brain);
 
-      console.log(this.useBrain);
       if (this.useBrain) {
         this.controls.forward = outputs[0];
         this.controls.left = outputs[1];
@@ -120,7 +119,7 @@ class SMR {
     this.y -= Math.cos(this.angle) * this.speed;
   }
 
-  draw(ctx, color) {
+  draw(ctx, color, drawSensor = false) {
     if (this.damaged) {
       ctx.fillStyle = "gray";
     } else {
@@ -133,7 +132,7 @@ class SMR {
     }
     ctx.fill();
 
-    if (this.sensor) {
+    if (this.sensor && drawSensor) {
       this.sensor.draw(ctx);
     }
   }
