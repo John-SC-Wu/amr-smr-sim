@@ -6,7 +6,7 @@ const road = new Road(canvas.width / 2, canvas.width * 0.9);
 const smr = new SMR(road.getLaneCenter(1), 100, 30, 50);
 
 function animate() {
-  smr.update();
+  smr.update(road.borders);
 
   canvas.height = window.innerHeight;
 
