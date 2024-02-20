@@ -22,11 +22,11 @@ if (localStorage.getItem("bestBrain")) {
 
 const traffic = [
   new SMR(road.getLaneCenter(1), -100, 30, 50, "DUMMY", 2, getRandomColor()),
-  new SMR(road.getLaneCenter(0), -300, 30, 50, "DUMMY", 2, getRandomColor()),
-  new SMR(road.getLaneCenter(2), -300, 30, 50, "DUMMY", 2, getRandomColor()),
+  new SMR(road.getLaneCenter(0), -300, 30, 50, "DUMMY", 1.5, getRandomColor()),
+  new SMR(road.getLaneCenter(2), -300, 30, 50, "DUMMY", 1.5, getRandomColor()),
   new SMR(road.getLaneCenter(0), -500, 30, 50, "DUMMY", 2, getRandomColor()),
   new SMR(road.getLaneCenter(1), -500, 30, 50, "DUMMY", 2, getRandomColor()),
-  new SMR(road.getLaneCenter(1), -700, 30, 50, "DUMMY", 2, getRandomColor()),
+  new SMR(road.getLaneCenter(1), -700, 30, 50, "DUMMY", 1.6, getRandomColor()),
   new SMR(road.getLaneCenter(2), -700, 30, 50, "DUMMY", 2, getRandomColor()),
 ];
 
@@ -65,14 +65,14 @@ function animate(time) {
 
   road.draw(mainCtx);
   for (let i = 0; i < traffic.length; i++) {
-    traffic[i].draw(mainCtx, "red");
+    traffic[i].draw(mainCtx);
   }
   mainCtx.globalAlpha = 0.2;
   for (let i = 0; i < smrs.length; i++) {
-    smrs[i].draw(mainCtx, "blue");
+    smrs[i].draw(mainCtx);
   }
   mainCtx.globalAlpha = 1;
-  bestSMR.draw(mainCtx, "blue", true);
+  bestSMR.draw(mainCtx, true);
 
   mainCtx.restore();
 
