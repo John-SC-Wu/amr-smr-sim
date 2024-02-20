@@ -29,3 +29,8 @@ The code will appear as the course progresses and will be divided into parts as 
 
 - add polygon
 - add damage access
+
+### 5. Traffic simulation
+
+- add control type
+- add traffic
