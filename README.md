@@ -2,7 +2,7 @@
 
 The code will appear as the course progresses and will be divided into parts as follows:
   01. SMR movement mechanics
-  02. Lane definition
+  02. Road definition
   03. Artificial sensors
   04. Collision detection
   05. Traffic simulation
