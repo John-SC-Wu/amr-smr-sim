@@ -13,12 +13,15 @@
       <button onclick="save()">💾</button>
     </div>
 
+    <script src="js/phase_2/world.js"></script>
     <script src="js/phase_2/graphEditor.js"></script>
     <script src="js/phase_2/viewport.js"></script>
     <script src="js/phase_2/math/utils.js"></script>
     <script src="js/phase_2/math/graph.js"></script>
     <script src="js/phase_2/primitives/point.js"></script>
     <script src="js/phase_2/primitives/segment.js"></script>
+    <script src="js/phase_2/primitives/polygon.js"></script>
+    <script src="js/phase_2/primitives/envelope.js"></script>
     <script>
       myCanvas.width = 600;
       myCanvas.height = 600;
@@ -28,7 +31,8 @@
       const graphString = localStorage.getItem("graph");
       const graphInfo = graphString ? JSON.parse(graphString) : null;
       const graph = graphInfo ? Graph.load(graphInfo) : new Graph();
-      console.log(graph);
+      const world = new World(graph);
+
       const viewport = new Viewport(myCanvas);
       const graphEditor = new GraphEditor(viewport, graph);
 
@@ -36,6 +40,9 @@
 
       function animate() {
         viewport.reset();
+        world.generate();
+        world.draw(ctx);
+        ctx.globalAlpha = 0.3;
         graphEditor.display();
         requestAnimationFrame(animate);
       }
