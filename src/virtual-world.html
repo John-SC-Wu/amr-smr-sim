@@ -16,6 +16,8 @@
     <script src="js/phase_2/world.js"></script>
     <script src="js/phase_2/graphEditor.js"></script>
     <script src="js/phase_2/viewport.js"></script>
+    <script src="js/phase_2/items/tree.js"></script>
+    <script src="js/phase_2/items/building.js"></script>
     <script src="js/phase_2/math/utils.js"></script>
     <script src="js/phase_2/math/graph.js"></script>
     <script src="js/phase_2/primitives/point.js"></script>
@@ -45,7 +47,8 @@
           world.generate();
           oldGraphHash = graph.hash();
         }
-        world.draw(ctx);
+        const viewPoint = scale(viewport.getOffset(), -1);
+        world.draw(ctx, viewPoint);
         ctx.globalAlpha = 0.3;
         graphEditor.display();
         requestAnimationFrame(animate);
