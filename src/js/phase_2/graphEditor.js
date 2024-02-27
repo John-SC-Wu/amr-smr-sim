@@ -1,6 +1,7 @@
 class GraphEditor {
-  constructor(canvas, graph) {
-    this.canvas = canvas;
+  constructor(viewport, graph) {
+    this.viewport = viewport;
+    this.canvas = viewport.canvas;
     this.graph = graph;
 
     this.ctx = this.canvas.getContext("2d");
@@ -64,6 +65,12 @@ class GraphEditor {
     if (this.selected == point) {
       this.selected = null;
     }
+  }
+
+  dispose() {
+    this.graph.dispose();
+    this.selected = null;
+    this.hovered = null;
   }
 
   display() {
