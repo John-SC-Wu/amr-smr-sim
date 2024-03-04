@@ -10,27 +10,29 @@ const networkCtx = networkCanvas.getContext("2d");
 const road = new Road(mainCanvas.width / 2, mainCanvas.width * 0.9);
 
 // --- player clone generation ---
-const N = 100; // number of clones
+const N = 1; // number of clones
 const clones = generateSmrClones(N);
 let bestSMR = clones[0];
 if (localStorage.getItem("bestBrain")) {
   for (let i = 0; i < clones.length; i++) {
     clones[i].brain = JSON.parse(localStorage.getItem("bestBrain"));
     if (i != 0) {
-      NeuralNetwork.mutate(clones[i].brain, 0.1);
+      NeuralNetwork.mutate(clones[i].brain, 0.9);
     }
   }
 }
 
 // --- traffic participants (NPC) ---
 const traffic = [
-  new SMR(road.getLaneCenter(1), -100, 30, 50, "DUMMY", 2, getDummyColor()),
-  new SMR(road.getLaneCenter(0), -300, 30, 50, "DUMMY", 1.5, getDummyColor()),
-  new SMR(road.getLaneCenter(2), -300, 30, 50, "DUMMY", 1.5, getDummyColor()),
+  new SMR(road.getLaneCenter(1), -200, 30, 50, "DUMMY", 2, getDummyColor()),
+  new SMR(road.getLaneCenter(0), -300, 30, 50, "DUMMY", 2, getDummyColor()),
+  new SMR(road.getLaneCenter(2), -350, 30, 50, "DUMMY", 2, getDummyColor()),
   new SMR(road.getLaneCenter(0), -500, 30, 50, "DUMMY", 2, getDummyColor()),
   new SMR(road.getLaneCenter(1), -500, 30, 50, "DUMMY", 2, getDummyColor()),
-  new SMR(road.getLaneCenter(1), -700, 30, 50, "DUMMY", 1.6, getDummyColor()),
   new SMR(road.getLaneCenter(2), -700, 30, 50, "DUMMY", 2, getDummyColor()),
+  new SMR(road.getLaneCenter(1), -900, 30, 50, "DUMMY", 2, getDummyColor()),
+  new SMR(road.getLaneCenter(2), -1100, 30, 50, "DUMMY", 2, getDummyColor()),
+  new SMR(road.getLaneCenter(1), -1250, 30, 50, "DUMMY", 2, getDummyColor()),
 ];
 
 animate();
