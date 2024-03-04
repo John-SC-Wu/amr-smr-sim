@@ -65,12 +65,15 @@ class Sensor {
           -this.raySpread / 2,
           this.rayCount == 1 ? 0.5 : i / (this.rayCount - 1)
         ) + this.smr.angle;
-
-      const start = { x: this.smr.x, y: this.smr.y };
+      const start = {
+        x: this.smr.x,
+        y: this.smr.y,
+      };
       const end = {
         x: this.smr.x - Math.sin(rayAngle) * this.rayLength,
         y: this.smr.y - Math.cos(rayAngle) * this.rayLength,
       };
+
       this.rays.push([start, end]);
     }
   }

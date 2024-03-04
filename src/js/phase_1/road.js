@@ -7,7 +7,7 @@ class Road {
     this.left = x - width / 2;
     this.right = x + width / 2;
 
-    const infinity = 1000000;
+    const infinity = 1e6;
     this.top = -infinity;
     this.bottom = infinity;
 
@@ -23,11 +23,10 @@ class Road {
 
   getLaneCenter(laneIndex) {
     const laneWidth = this.width / this.laneCount;
-    return (
-      this.left +
-      laneWidth / 2 +
-      Math.min(laneIndex, this.laneCount - 1) * laneWidth
-    );
+    // --- protection for lane index within 0 and lane count ---
+    laneIndex = Math.min(laneIndex, this.laneCount - 1);
+    laneIndex = Math.max(laneIndex, 0);
+    return this.left + laneWidth / 2 + laneIndex * laneWidth;
   }
 
   draw(ctx) {

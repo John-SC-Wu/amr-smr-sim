@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <title>SMR Simulation - No library</title>
+    <title>SMR Simulation</title>
     <link rel="stylesheet" href="css/styles.css" />
   </head>
   <body>
@@ -20,5 +20,15 @@
     <script src="js/phase_1/controls.js"></script>
     <script src="js/phase_1/smr.js"></script>
     <script src="js/phase_1/main.js"></script>
+    <script>
+      // --- button callbacks ---
+      function save() {
+        localStorage.setItem("bestBrain", JSON.stringify(bestSMR.brain));
+      }
+
+      function discard() {
+        localStorage.removeItem("bestBrain");
+      }
+    </script>
   </body>
 </html>

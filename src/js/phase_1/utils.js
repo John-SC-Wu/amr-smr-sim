@@ -51,3 +51,8 @@ function getRandomColor() {
   const hue = 290 + Math.random() * 260;
   return "hsl(" + hue + ", 100%, 60%)";
 }
+
+function getDummyColor() {
+  const hue = 290 + 0.8 * 260;
+  return "hsl(" + hue + ", 100%, 60%)";
+}
