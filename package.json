@@ -1,0 +1,11 @@
+{
+  "name": "amr-smr-sim",
+  "private": true,
+  "description": "AMR/SMR simulation course code and the Kachaka long-term care 3D demo",
+  "scripts": {
+    "build:offline": "node tools/build_offline.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

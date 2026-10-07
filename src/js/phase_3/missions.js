@@ -1,10 +1,10 @@
 import { FLOORS, NURSE_MINUTES } from "./config.js";
-import { Token, CancelError, ignoreCancel, emit, formatClock } from "./sim.js";
+import { Token, CancelError, ignoreCancel, emit, formatClock, yawTo } from "./sim.js";
 
 export const TASKS = [
   { id: "rounds", icon: "i-heart", name: "生命徵象巡房", route: "1F→3F→4F→1F", at: [8, 0] },
   { id: "delivery", icon: "i-box", name: "藥品配送", route: "1F→3F→1F", at: [9, 30] },
-  { id: "patrol", icon: "i-shield", name: "樓層巡邏", route: "1F→2F→1F", at: [10, 40] },
+  { id: "patrol", icon: "i-shield", name: "失智專區巡視", route: "1F→2F→1F", at: [10, 40] },
   { id: "charge", icon: "i-battery", name: "回充待命", route: "1F 充電座", at: [11, 20] },
 ];
 
@@ -174,13 +174,15 @@ export class Missions {
     nurse.pose = "idle";
     this.say(nurse, `收到 ${bed.id} ${res.flags[0]} 的通知，我過去看看。`);
     this.#alertStatus("護理師前往床邊");
+    this.w.camera.focus = nurse;
     await nurse.walkTo(path, sim, token, bed.nurseSpot.yaw);
     nurse.pose = "check";
     this.#alertStatus("護理師已到床邊處置");
     const line = res.flags[0].startsWith("RR")
       ? `${patient.data.title}，我幫您把床頭搖高一點，呼吸會比較順。`
-      : `${patient.data.title}，心跳有點快，我幫您量個血壓、看一下點滴。`;
+      : `${patient.data.title}，心跳有點快，我幫您量個血壓，再跟醫務室醫師報告。`;
     this.say(nurse, line);
+    sim.wait(5, token).then(() => (this.w.camera.focus = null)).catch(ignoreCancel);
     // follow-up continues while the robot moves on
     (async () => {
       await sim.wait(16, token);
@@ -209,27 +211,29 @@ export class Missions {
     const ph = staff.pharmacist;
     this.step("3F 護理站以平板派送任務", 0.03);
     nurse.pose = "check";
-    this.say(nurse, "小幫手，麻煩到藥局幫 302-B 領藥。");
-    emit("log", { tag: "staff", html: "3F 護理站派送任務：<b>藥品配送</b> 1F 藥局 → 3F 護理站" });
+    this.say(nurse, "小幫手，麻煩到醫務室幫 302-B 張伯伯領藥。");
+    emit("log", { tag: "staff", html: "3F 護理站派送任務：<b>藥品配送</b> 1F 醫務室藥局 → 3F 護理站" });
     await sim.wait(2.5, token);
     nurse.pose = "type";
-    robot.startCommand("move_shelf", 'target_shelf_id="MED-01", destination_location_id="3F-nurse", undock_on_destination=False');
-    this.step("前往 1F 藥局", 0.1);
-    robot.setActivity("move", "前往藥局", "1F 藥局");
+    robot.startCommand("move_shelf", 'target_shelf_id="MED-01", destination_location_id="3F-station", undock_on_destination=False');
+    this.step("前往 1F 醫務室藥局", 0.1);
+    robot.setActivity("move", "前往藥局", "1F 醫務室");
     const appr = robot.shelfApproach(shelves.med.pose());
-    await robot.goTo(appr, token, { label: "1F 藥局" });
+    await robot.goTo(appr, token, { label: "1F 醫務室藥局" });
 
     this.step("藥師備藥並放入藥品櫃", 0.24);
-    robot.setActivity("handoff", "等待備藥", "1F 藥局");
-    await robot.speak("藥局您好，我來領 3F 302-B 的藥。", token);
+    robot.setActivity("handoff", "等待備藥", "1F 醫務室");
+    await robot.speak("藥局您好，我來領 3F 302-B 張伯伯的藥。", token);
     ph.pose = "idle";
+    this.w.camera.focus = ph;
     await ph.walkTo([[-6.3, -3.85], [-5.3, -3.05]], sim, token, -Math.PI / 2);
     ph.pose = "carry";
     for (let k = 1; k <= 3; k++) {
       await sim.wait(0.9, token);
       shelves.med.load(k);
     }
-    this.say(ph, "302-B 的藥備好了，抽屜已上鎖。");
+    this.say(ph, "張伯伯的藥備好了，抽屜已上鎖。");
+    this.w.camera.focus = null;
     ph.pose = "idle";
     ph.walkTo([[-6.3, -3.85], [ph.home.x, ph.home.z]], sim, token, ph.home.yaw).then(() => (ph.pose = ph.home.pose)).catch(ignoreCancel);
     await sim.wait(1.5, token);
@@ -238,13 +242,14 @@ export class Missions {
     await robot.dockShelf(shelves.med, token);
     this.step("搭電梯送往 3F 護理站", 0.44);
     robot.setActivity("move", "藥品配送中", "→ 3F 護理站");
-    await robot.goTo(hospital.location("3F-nurse"), token, { label: "3F 護理站" });
+    await robot.goTo(hospital.location("3F-station"), token, { label: "3F 護理站" });
 
     this.step("護理師取件簽收", 0.72);
     robot.setActivity("handoff", "等待取件", "3F 護理站");
-    await robot.speak("3F 護理站您好，302-B 的藥品送到了，請取件。", token);
+    await robot.speak("3F 護理站您好，302-B 張伯伯的藥送到了，請取件。", token);
     const pick = hospital.staffSpots["3F-pickup"];
     nurse.pose = "idle";
+    this.w.camera.focus = nurse;
     await nurse.walkTo([[-0.45, 3.0], [pick.x, pick.z]], sim, token, pick.yaw);
     nurse.pose = "hand";
     for (let k = 0; k < 3; k++) {
@@ -252,6 +257,7 @@ export class Missions {
       shelves.med.unloadOne();
     }
     this.say(nurse, "收到，謝謝小幫手！");
+    this.w.camera.focus = null;
     this.kpi.deliveries++;
     this.kpi.minutes += NURSE_MINUTES.delivery;
     emit("kpi");
@@ -263,51 +269,89 @@ export class Missions {
       .catch(ignoreCancel);
     await sim.wait(1.5, token);
 
-    this.step("歸還藥品櫃至 1F 藥局", 0.8);
+    this.step("歸還藥品櫃至 1F 醫務室", 0.8);
     await robot.returnShelf(shelves.med, token);
   }
 
   async patrol(token) {
     const { robot, hospital } = this.w;
     const cps = hospital.patrol;
-    robot.startCommand("start_shortcut_command", 'target_shortcut_id="patrol-2F"');
+    robot.startCommand("start_shortcut_command", 'target_shortcut_id="patrol-2F-dementia"');
     for (let k = 0; k < cps.length; k++) {
       const cp = cps[k];
       this.step(`巡檢點 ${k + 1}/${cps.length}：${cp.name}`, 0.08 + 0.78 * (k / cps.length));
-      robot.setActivity("move", "巡邏中", cp.name);
-      if (k === cps.length - 1) this.#doctorWalk(token);
-      await robot.goTo(cp, token);
+      robot.setActivity("move", "巡視中", cp.name);
+      if (cp.id === "2F-cp-activity") await this.#wanderingResident(cp, token);
+      else await robot.goTo(cp, token);
       robot.setActivity("patrol", "巡檢掃描", cp.name);
       await robot.rotateInPlace(0.7, token);
       await robot.rotateInPlace(-1.4, token);
       await robot.rotateInPlace(0.7, token);
       const people = robot.detections.filter((d) => d.label === "PERSON").length;
-      emit("log", { tag: "nav", html: `${cp.name}：DOOR 關閉 ✓・PERSON ×${people}・通道淨空` });
+      emit("log", { tag: "nav", html: `${cp.name}：DOOR 關閉 ✓・PERSON ×${people}` });
     }
     this.kpi.patrols++;
     this.kpi.minutes += NURSE_MINUTES.patrol;
     emit("kpi");
-    this.step("巡邏完成，返回 1F 充電座", 0.9);
-    await robot.speak("2F 巡邏完成，返回充電座。", token);
+    this.step("巡視完成，返回 1F 充電座", 0.9);
+    await robot.speak("2F 巡視完成，返回充電座。", token);
     await robot.returnHome(hospital.location("1F-charger"), hospital.charger, token);
   }
 
-  #doctorWalk(token) {
-    const { sim, staff } = this.w;
-    const d = staff.doctor;
-    d.onAvoid = () => this.say(d, "好，我讓一下，你先過。");
+  // a resident heads for the controlled exit: the robot stops to talk and calls the care attendant
+  async #wanderingResident(cp, token) {
+    const { robot, staff, sim, hospital } = this.w;
+    const res = staff.wanderer;
+    const carer = staff["2F-carer"];
+    const seat = res.home;
+    const lane = hospital.exitPoint.z;
+    const move = robot.goTo(cp, token);
+    res.walkTo([[seat.x, 1.4], [seat.x - 0.9, lane], [hospital.exitPoint.x, lane]], sim, token, Math.PI).catch(ignoreCancel);
+    const near = sim.until(() => !res.sitting && Math.hypot(res.x - robot.x, res.z - robot.z) < 3.0, token);
+    if ((await Promise.race([move.then(() => "arrived"), near.then(() => "near")])) === "arrived") return;
+
+    robot.hold = true;
+    this.w.camera.focus = res;
+    res.stop();
+    res.finalYaw = yawTo(robot.x - res.x, robot.z - res.z);
+    robot.setActivity("alert", "住民遊走提醒", "2F 往出入口");
+    this.step("偵測到住民往出入口移動，通知照服員", null);
+    emit("log", { tag: "nav", html: "前鏡頭偵測 PERSON：住民 陳伯伯 往出入口方向移動" });
+    emit("log", { tag: "alert", html: "2F 失智照顧專區：住民往出入口移動 → 通知 2F 照服站與 LINE 群組" });
+    this.kpi.alerts++;
+    emit("kpi");
+    await robot.speak("陳伯伯午安，要去哪裡呀？我請照服員來陪您喔。", token);
+    this.say(res, "我要回家……");
+    this.say(carer, "收到，我來陪陳伯伯。");
+    carer.pose = "idle";
+    const meet = [res.x - 0.75, res.z + 0.15];
+    await carer.walkTo([[-0.2, 2.75], [-0.2, 1.1], [meet[0], 1.1], meet], sim, token, yawTo(res.x - meet[0], res.z - meet[1]));
+    res.finalYaw = yawTo(carer.x - res.x, carer.z - res.z);
+    this.say(carer, "陳伯伯，我們回活動室喝茶好嗎？");
+    await sim.wait(2.5, token);
+    this.say(res, "好啊，好啊。");
+    emit("log", { tag: "staff", html: "照服員 阿芳 陪同住民 陳伯伯 返回活動室" });
+    // they walk back together while the robot carries on
     (async () => {
-      d.pose = "idle";
-      await d.walkTo([[6.75, -1.3], [6.75, 0], [-5.4, 0], [-6.75, -0.7], [-6.75, -2.1]], sim, token, Math.PI / 2);
-      d.pose = "check";
-      this.say(d, "早上那管檢體的報告出來了嗎？");
-      await sim.wait(2.5, token);
-      this.say(staff.labtech, "剛出來，已經上傳系統了。");
+      await Promise.all([
+        res.walkTo([[seat.x, 1.4], [seat.x, seat.z]], sim, token, seat.yaw),
+        carer.walkTo([[seat.x - 0.75, 1.45], [seat.x - 0.75, 2.1]], sim, token, 0),
+      ]);
+      res.sitting = true;
+      carer.pose = "check";
       await sim.wait(6, token);
-      d.pose = "idle";
-      await d.walkTo([[-6.75, -0.7], [-5.4, 0.45], [6.75, 0.45], [6.75, -1.3], [d.home.x, d.home.z]], sim, token, d.home.yaw);
-      d.pose = d.home.pose;
+      carer.pose = "idle";
+      await carer.walkTo([[1.6, 1.3], [-0.2, 1.3], [-0.2, 2.75], [carer.home.x, carer.home.z]], sim, token, carer.home.yaw);
+      carer.pose = carer.home.pose;
     })().catch(ignoreCancel);
+    await sim.wait(1.2, token);
+    await robot.speak("謝謝阿芳，我繼續巡視。", token);
+    this.w.camera.focus = null;
+    robot.hold = false;
+    robot.setActivity("move", "巡視中", cp.name);
+    robot.startCommand("move_to_location", `target_location_id="${cp.id}"`, false);
+    await move;
+    emit("log", { tag: "nav", html: "活動室：住民 陳伯伯 已由照服員陪同返回 ✓" });
   }
 
   async charge(token) {
@@ -349,6 +393,7 @@ export class Missions {
       p.onAvoid = null;
     }
     elevator.reset(0);
+    this.w.camera.focus = null;
     robot.shelf = null;
     robot.pin = 0;
     robot.lastLoc = null;

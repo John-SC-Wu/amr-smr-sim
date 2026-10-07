@@ -3,23 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Kachaka 醫院協作</title>
+    <title>Kachaka 長照協作</title>
     <meta
       name="description"
-      content="Kachaka Pro 自主移動機器人在多樓層醫院中搭電梯巡邏、以緯創 BestShape VS 毫米波感測器量測生命徵象並配送藥品的 3D 概念模擬。"
-    />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap"
+      content="Kachaka Pro 自主移動機器人在多樓層長照機構中搭電梯巡房、以緯創 BestShape VS 毫米波感測器量測住民生命徵象、配送藥品並巡視失智照顧專區的 3D 概念模擬。"
     />
     <link rel="stylesheet" href="css/hospital-styles.css" />
     <script type="importmap">
       {
         "imports": {
-          "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+          "three": "./vendor/three/three.module.min.js",
+          "three/addons/": "./vendor/three/addons/"
         }
       }
     </script>
@@ -43,7 +37,7 @@
       <header class="brand">
         <div class="brand-mark" aria-hidden="true"><svg><use href="#i-robot" /></svg></div>
         <div class="brand-text">
-          <h1>Kachaka 醫院協作</h1>
+          <h1>Kachaka 長照協作</h1>
           <p>Kachaka Pro × 緯創 BestShape VS<span class="sim-tag">概念模擬</span></p>
         </div>
       </header>
@@ -107,7 +101,7 @@
           <ul id="detect-list"><li class="muted">—</li></ul>
         </div>
         <div class="elev">
-          <div class="elev-head"><span class="label">電梯 IoT</span><span id="elev-state">1F · 門關閉</span></div>
+          <div class="elev-head"><span class="label">電梯系統串接</span><span id="elev-state">1F · 門關閉</span></div>
           <ol class="elev-floors" id="elev-floors">
             <li data-floor="0">1F</li>
             <li data-floor="1">2F</li>
@@ -119,12 +113,12 @@
 
       <div class="stage-wrap">
         <main class="stage" id="stage">
-          <canvas id="scene" role="img" aria-label="醫院 3D 場景：四層樓建築與外掛玻璃電梯，Kachaka 機器人在各樓層執行任務"></canvas>
+          <canvas id="scene" role="img" aria-label="長照機構 3D 場景：四層樓建築與外掛玻璃電梯，Kachaka 機器人在各樓層執行任務"></canvas>
           <div class="labels" id="labels" aria-hidden="true"></div>
           <div class="hud hud-top">
             <div class="floor-badge" id="floor-badge">
               <b id="hud-floor">1F</b>
-              <span><span id="hud-floor-name">門診大廳・藥局</span><small id="hud-clock">07:58</small></span>
+              <span><span id="hud-floor-name">服務大廳・醫務室</span><small id="hud-clock">07:58</small></span>
             </div>
             <div class="seg cam" role="group" aria-label="視角">
               <button type="button" id="cam-auto" data-cam="auto" aria-pressed="true">跟隨</button>
@@ -161,16 +155,18 @@
             <span id="vs-meta">巡房開始後自動帶入床位資料</span>
           </div>
         </div>
-        <div class="monitor" role="group" aria-label="即時生理波形">
-          <div class="mon-row" data-sig="hr">
-            <div class="mon-label"><span>HR</span><small>心率 bpm</small></div>
-            <canvas id="wave-hr"></canvas>
-            <b class="mon-val" id="vs-hr">--</b>
-          </div>
-          <div class="mon-row" data-sig="rr">
-            <div class="mon-label"><span>RR</span><small>呼吸 次/分</small></div>
-            <canvas id="wave-rr"></canvas>
-            <b class="mon-val" id="vs-rr">--</b>
+        <div class="monitor" role="group" aria-label="即時量測數值">
+          <div class="mon-grid">
+            <div class="mon-cell" data-sig="hr">
+              <span class="mon-label">HR<small>心率</small></span>
+              <b class="mon-val" id="vs-hr">--</b>
+              <small class="mon-unit">bpm</small>
+            </div>
+            <div class="mon-cell" data-sig="rr">
+              <span class="mon-label">RR<small>呼吸</small></span>
+              <b class="mon-val" id="vs-rr">--</b>
+              <small class="mon-unit">次/分</small>
+            </div>
           </div>
           <div class="mon-foot">
             <span>距離 <b id="vs-dist">--</b> m</span>
@@ -213,7 +209,7 @@
 
       <footer class="credits">
         <span>機器人模型：<a href="https://github.com/pf-robotics/kachaka-api" target="_blank" rel="noopener">pf-robotics/kachaka-api</a>（Apache-2.0）</span>
-        <span>本頁為概念模擬，病患、數據與醫院皆為虛構，與 Preferred Robotics、緯創醫學、西格瑪機器人無官方關聯。</span>
+        <span>本頁為概念模擬，住民、數據與機構皆為虛構，與 Preferred Robotics、緯創醫學、西格瑪機器人無官方關聯。</span>
       </footer>
     </div>
 

@@ -19,6 +19,7 @@ export class CameraDirector {
     this.want = { target: new THREE.Vector3(), dist: 0, azim: 0, elev: 0 };
     this.tmp = new THREE.Vector3();
     this.tmp2 = new THREE.Vector3();
+    this.focus = null; // a person the robot is interacting with; framed together with the robot
     this.onModeChange = () => {};
 
     this.controls = new OrbitControls(camera, dom);
@@ -72,6 +73,18 @@ export class CameraDirector {
       w.dist = 9.5 * this.aspectFactor;
       w.azim = 0.42;
       w.elev = 0.3;
+      return;
+    }
+    const f = this.focus;
+    if (f && f.floor === r.floor) {
+      // look across the robot-person line so neither hides the other
+      const d = Math.hypot(f.x - r.x, f.z - r.z);
+      const line = Math.atan2(f.x - r.x, f.z - r.z);
+      const near = (a) => Math.abs(Math.atan2(Math.sin(a - 0.4), Math.cos(a - 0.4)));
+      w.target.set((r.x + f.x) / 2, r.y + 0.6, (r.z + f.z) / 2);
+      w.dist = THREE.MathUtils.clamp(4.6 + d * 1.1, 5.6, 12) * this.aspectFactor;
+      w.azim = near(line + Math.PI / 2) < near(line - Math.PI / 2) ? line + Math.PI / 2 : line - Math.PI / 2;
+      w.elev = 0.8;
       return;
     }
     const s = this.sensor;

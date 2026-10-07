@@ -188,23 +188,6 @@ export class VitalSensor {
     }
   }
 
-  // monitor traces in real time at the patient's true rates (normalized -1..1)
-  waveform(t) {
-    if (!this.patient || this.state === "idle" || this.state === "done" || this.state === "upload") return null;
-    const n1 = hash(Math.floor(t * 90)) - 0.5;
-    const n2 = hash(Math.floor(t * 70) + 9.1) - 0.5;
-    if (this.state === "detect") return { hr: n1 * 0.25, rr: n2 * 0.3 + 0.2 * Math.sin(t * 2.1) };
-    const fr = this.patient.rr / 60;
-    const shallow = this.patient.rr > 22 ? 0.62 : 1;
-    const resp = shallow * (0.82 * Math.sin(2 * Math.PI * fr * t) + 0.12 * Math.sin(4 * Math.PI * fr * t + 0.7)) + n2 * 0.05;
-    const phase = t * (this.patient.hr / 60);
-    const k = Math.floor(phase);
-    const f = phase - k + (hash(k) - 0.5) * 0.04;
-    const g = (c, w) => Math.exp(-(((f - c) / w) ** 2));
-    const beat = 1.0 * g(0.1, 0.022) - 0.38 * g(0.17, 0.03) + 0.22 * g(0.4, 0.07);
-    return { hr: beat * 0.95 + resp * 0.08 + n1 * 0.05, rr: resp };
-  }
-
   reset() {
     this.state = "idle";
     this.bed = null;

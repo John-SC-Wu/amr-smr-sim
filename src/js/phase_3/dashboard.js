@@ -12,81 +12,15 @@ function css(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-// --- bedside-monitor style sweep: the trace is redrawn left to right with an erase gap ---
-class Sweep {
-  constructor(canvas, colorVar) {
-    this.canvas = canvas;
-    this.colorVar = colorVar;
-    this.x = 0;
-    this.acc = 0;
-    this.lastY = null;
-    this.speed = 62;
-    this.resize();
-  }
-
-  resize() {
-    const r = this.canvas.getBoundingClientRect();
-    if (r.width < 4) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.canvas.width = Math.round(r.width * dpr);
-    this.canvas.height = Math.round(r.height * dpr);
-    this.w = r.width;
-    this.h = r.height;
-    this.ctx = this.canvas.getContext("2d");
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.colors();
-    this.ctx.fillStyle = this.bg;
-    this.ctx.fillRect(0, 0, this.w, this.h);
-    this.x = 0;
-    this.lastY = null;
-  }
-
-  colors() {
-    this.bg = css("--monitor-bg");
-    this.fg = css(this.colorVar);
-    this.dim = css("--monitor-grid");
-  }
-
-  step(dt, t, sample) {
-    if (!this.ctx) return;
-    this.acc += this.speed * dt;
-    const n = Math.min(Math.floor(this.acc), 40);
-    this.acc -= Math.floor(this.acc);
-    const g = this.ctx;
-    for (let i = 0; i < n; i++) {
-      const v = sample(t - (n - 1 - i) / this.speed);
-      const y = v === null ? this.h * 0.5 : this.h * 0.5 - v * this.h * 0.4;
-      g.fillStyle = this.bg;
-      g.fillRect(this.x, 0, 12, this.h);
-      if (this.x + 12 > this.w) g.fillRect(0, 0, this.x + 12 - this.w, this.h);
-      g.strokeStyle = v === null ? this.dim : this.fg;
-      g.lineWidth = v === null ? 1 : 1.7;
-      g.beginPath();
-      g.moveTo(this.x - 1, this.lastY ?? y);
-      g.lineTo(this.x, y);
-      g.stroke();
-      this.lastY = y;
-      this.x++;
-      if (this.x >= this.w) {
-        this.x = 0;
-        this.lastY = null;
-      }
-    }
-  }
-}
-
 export class Dashboard {
   constructor(world) {
     this.w = world;
     this.timer = 0;
-    this.t = 0;
-    this.logCount = 0;
     this.floorLabels = [];
     this.vitalsLabel = null;
     this.alertLabel = null;
     this.vitalsHold = 0;
 
-    this.waves = { hr: new Sweep($("wave-hr"), "--hr"), rr: new Sweep($("wave-rr"), "--rr") };
     this.lidarCanvas = $("lidar");
     this.#bindControls();
     this.#buildTasks();
@@ -94,13 +28,7 @@ export class Dashboard {
     this.#bindEvents();
     this.#buildLabels();
     this.#themeWatch();
-    const ro = new ResizeObserver(() => {
-      this.waves.hr.resize();
-      this.waves.rr.resize();
-      this.lidarSize = null;
-    });
-    ro.observe($("wave-hr"));
-    ro.observe(this.lidarCanvas);
+    new ResizeObserver(() => (this.lidarSize = null)).observe(this.lidarCanvas);
     this.refresh();
   }
 
@@ -301,27 +229,13 @@ export class Dashboard {
   }
 
   #themeWatch() {
-    const refresh = () => {
-      this.waves.hr.colors();
-      this.waves.rr.colors();
-      this.lidarColors = null;
-    };
+    const refresh = () => (this.lidarColors = null);
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", refresh);
     new MutationObserver(refresh).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   }
 
   // ------------------------------------------------------------- frame
   update(realDt) {
-    this.t += realDt;
-    const { sensor } = this.w;
-    this.waves.hr.step(realDt, this.t, (t) => {
-      const s = sensor.waveform(t);
-      return s ? s.hr : null;
-    });
-    this.waves.rr.step(realDt, this.t, (t) => {
-      const s = sensor.waveform(t);
-      return s ? s.rr : null;
-    });
     this.vitalsHold = Math.max(0, this.vitalsHold - realDt);
     this.timer += realDt;
     if (this.timer > 0.12) {
@@ -406,7 +320,7 @@ export class Dashboard {
       $("vs-bed").textContent = s.bed.id;
       $("vs-floor").textContent = FLOORS[s.bed.floor].id;
       $("vs-name").textContent = `${p.name}・${p.sex}・${p.age} 歲`;
-      $("vs-meta").textContent = state === "done" && s.last ? `判讀：${s.last.label}${s.last.flags.length ? `（${s.last.flags.join("、")}）` : ""}` : "去識別化床位資料（模擬）";
+      $("vs-meta").textContent = state === "done" && s.last ? `判讀：${s.last.label}${s.last.flags.length ? `（${s.last.flags.join("、")}）` : ""}` : "去識別化住民資料（模擬）";
     }
     $("vs-hr").textContent = s.hr ?? "--";
     $("vs-rr").textContent = s.rr ?? "--";

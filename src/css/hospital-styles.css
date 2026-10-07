@@ -1,3 +1,36 @@
+/* Local fonts so the demo also plays offline (OFL, see assets/fonts/LICENSE).
+   Chinese text uses the system font: PingFang TC, Microsoft JhengHei or Noto Sans CJK. */
+@font-face {
+  font-family: "Barlow Semi Condensed";
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/barlow-semi-condensed-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow Semi Condensed";
+  font-weight: 600;
+  font-display: swap;
+  src: url("../assets/fonts/barlow-semi-condensed-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow Semi Condensed";
+  font-weight: 700;
+  font-display: swap;
+  src: url("../assets/fonts/barlow-semi-condensed-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+}
+
 /* Layout: control-room triptych — robot telemetry left, the glass hospital tower centre stage,
    bedside vitals right, mission rail + live log along the bottom. Phones stack by priority
    with the 3D stage pinned on top. */
@@ -34,8 +67,8 @@
   --hr: #3ddc74;
   --rr: #f5cf3a;
 
-  --font-display: "Barlow Semi Condensed", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
-  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", "Heiti TC", system-ui, sans-serif;
+  --font-display: "Barlow Semi Condensed", "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", "Noto Sans CJK TC", sans-serif;
+  --font-body: "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", "Noto Sans CJK TC", "Heiti TC", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 
   --fs-xs: 11px;
@@ -425,6 +458,10 @@ svg {
   min-height: 0;
   overflow: auto;
   scrollbar-width: thin;
+}
+
+.panel > * {
+  flex-shrink: 0;
 }
 
 .panel-head {
@@ -1171,49 +1208,60 @@ svg {
   overflow: hidden;
 }
 
-.mon-row {
+.mon-grid {
   display: grid;
-  grid-template-columns: 50px minmax(0, 1fr) 62px;
-  align-items: center;
-  gap: 8px;
-  min-height: 54px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mon-cell {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: end;
+  column-gap: 6px;
+  padding: 4px 4px 8px;
+  min-width: 0;
+}
+
+.mon-cell + .mon-cell {
+  border-left: 1px solid var(--monitor-grid);
+  padding-left: 12px;
 }
 
 .mon-label {
-  display: grid;
-  line-height: 1.2;
-}
-
-.mon-label span {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   font: 700 var(--fs-lg) / 1 var(--font-display);
   letter-spacing: 0.06em;
 }
 
 .mon-label small {
-  font-size: 10px;
+  font: 500 var(--fs-xs) / 1 var(--font-body);
+  letter-spacing: 0;
   color: var(--monitor-dim);
 }
 
-.mon-row[data-sig="hr"] .mon-label span,
-.mon-row[data-sig="hr"] .mon-val {
+.mon-val {
+  font: 600 52px / 1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.mon-unit {
+  font-size: var(--fs-xs);
+  color: var(--monitor-dim);
+  padding-bottom: 6px;
+}
+
+.mon-cell[data-sig="hr"] .mon-label,
+.mon-cell[data-sig="hr"] .mon-val {
   color: var(--hr);
 }
 
-.mon-row[data-sig="rr"] .mon-label span,
-.mon-row[data-sig="rr"] .mon-val {
+.mon-cell[data-sig="rr"] .mon-label,
+.mon-cell[data-sig="rr"] .mon-val {
   color: var(--rr);
-}
-
-.mon-row canvas {
-  width: 100%;
-  height: 52px;
-  display: block;
-}
-
-.mon-val {
-  font: 600 40px / 1 var(--font-display);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
 }
 
 .mon-foot {
@@ -1662,14 +1710,8 @@ tr[data-new="true"] td {
     padding: 12px;
     gap: 10px;
   }
-  .mon-row {
-    min-height: 44px;
-  }
-  .mon-row canvas {
-    height: 42px;
-  }
   .mon-val {
-    font-size: 32px;
+    font-size: 40px;
   }
   .lidar canvas {
     height: 118px;
@@ -1831,7 +1873,7 @@ tr[data-new="true"] td {
     height: 30px;
   }
   .mon-val {
-    font-size: 36px;
+    font-size: 46px;
   }
   .lbl-floor span {
     display: none;

@@ -41,12 +41,14 @@ function part(geometry, color, matrix = null) {
 export const ROLES = {
   nurse: { label: "護理師", top: 0x8cc9dc, bottom: 0x8cc9dc, coat: null, hair: 0x2a2220, bun: true, tablet: true },
   nurseB: { label: "護理師", top: 0xe9a9bd, bottom: 0xe9a9bd, coat: null, hair: 0x3a2a24, bun: true },
+  carer: { label: "照服員", top: 0x93c98f, bottom: 0x3f4b5a, coat: null, hair: 0x2b2421, bun: true },
   doctor: { label: "醫師", top: 0x5f83aa, bottom: 0x39434f, coat: 0xf7f9f9, hair: 0x1f1d1c, tablet: true },
   pharmacist: { label: "藥師", top: 0x6aa384, bottom: 0x44505a, coat: 0xf7f9f9, hair: 0x2b2421 },
-  labtech: { label: "醫檢師", top: 0x9b8cc4, bottom: 0x48505c, coat: 0xf7f9f9, hair: 0x302724, bun: true },
   reception: { label: "服務台", top: 0x2f6f8f, bottom: 0x2d3a46, coat: null, hair: 0x231d1b, bun: true },
-  visitor: { label: "訪客", top: 0xd9a441, bottom: 0x3f4b5a, coat: null, hair: 0x5b4636 },
-  visitor2: { label: "訪客", top: 0x6b8f71, bottom: 0x55575d, coat: null, hair: 0xb9b2aa },
+  resident: { label: "住民", top: 0xb9c6d3, bottom: 0x5b6068, coat: null, hair: 0xd8d4cc, speed: 0.45 },
+  resident2: { label: "住民", top: 0xd8c3a5, bottom: 0x4f555c, coat: null, hair: 0xe2ded7, speed: 0.45 },
+  visitor: { label: "家屬", top: 0xd9a441, bottom: 0x3f4b5a, coat: null, hair: 0x5b4636 },
+  visitor2: { label: "家屬", top: 0x6b8f71, bottom: 0x55575d, coat: null, hair: 0x3a302a },
 };
 
 export class Person {
@@ -64,7 +66,7 @@ export class Person {
     this.onAvoid = null;
     this.path = [];
     this.finalYaw = null;
-    this.speed = 1.05;
+    this.speed = this.roleDef.speed ?? 1.05;
     this.walking = false;
     this.phase = Math.random() * 6;
     this.idleT = Math.random() * 10;
@@ -164,6 +166,13 @@ export class Person {
     this.walking = true;
     this.pose = "idle";
     return sim.until(() => !this.walking && this.finalYaw === null, token);
+  }
+
+  // stop walking where the person is (resolves a pending walkTo)
+  stop() {
+    this.path = [];
+    this.walking = false;
+    this.finalYaw = null;
   }
 
   turnTo(yaw, sim, token) {

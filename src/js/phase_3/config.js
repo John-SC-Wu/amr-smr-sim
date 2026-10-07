@@ -1,4 +1,4 @@
-// --- shared constants for the hospital AMR scene (meters, seconds) ---
+// --- shared constants for the long-term care AMR scene (meters, seconds) ---
 
 export const FLOOR_GAP = 4.2; // slab-to-slab distance; floors are drawn as a cut-away stack
 
@@ -10,12 +10,12 @@ export const WALL_LOW = 1.3; // cut-away interior wall height
 export const WALL_HIGH = 2.9; // back facade
 export const WALL_T = 0.12;
 
-// Wayfinding colour per floor (hospital floors are colour-coded)
+// Wayfinding colour per floor (care facilities colour-code their floors)
 export const FLOORS = [
-  { id: "1F", map: "hosp-1f-lobby", name: "門診大廳・藥局", tint: 0xece3d4, accent: 0xc9893a, css: "#c9893a" },
-  { id: "2F", map: "hosp-2f-lab", name: "檢驗科・中央供應", tint: 0xe6e3ef, accent: 0x7c6fb4, css: "#7c6fb4" },
-  { id: "3F", map: "hosp-3f-ward-a", name: "內科病房 A", tint: 0xdcece5, accent: 0x2e9a7b, css: "#2e9a7b" },
-  { id: "4F", map: "hosp-4f-rcw", name: "呼吸照護病房", tint: 0xdde9f2, accent: 0x3b7fb9, css: "#3b7fb9" },
+  { id: "1F", map: "ltc-1f-lobby", name: "服務大廳・醫務室", tint: 0xece3d4, accent: 0xc9893a, css: "#c9893a" },
+  { id: "2F", map: "ltc-2f-dementia", name: "失智照顧專區", tint: 0xe6e3ef, accent: 0x7c6fb4, css: "#7c6fb4" },
+  { id: "3F", map: "ltc-3f-care-a", name: "養護區 A", tint: 0xdcece5, accent: 0x2e9a7b, css: "#2e9a7b" },
+  { id: "4F", map: "ltc-4f-care-b", name: "養護區 B", tint: 0xdde9f2, accent: 0x3b7fb9, css: "#3b7fb9" },
 ];
 
 // Kachaka Pro, from pf-robotics/kachaka-api (URDF + python/kachaka_api/base.py)

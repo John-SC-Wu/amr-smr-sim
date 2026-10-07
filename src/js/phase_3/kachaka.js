@@ -64,6 +64,7 @@ export class Kachaka {
     this.exitVia = [[-1.4, -3.0], [-2.25, -2.4], [-2.25, CORRIDOR.minZ]];
     this.activity = { kind: "charge", label: "充電中", detail: "1F 充電座" };
     this.command = { name: "get_battery_info", args: "", state: "PENDING" };
+    this.hold = false; // pause the current route (e.g. to talk to someone) without cancelling it
     this.blocked = false;
     this.blockedSince = 0;
     this.lastYieldSpeech = -99;
@@ -369,13 +370,14 @@ export class Kachaka {
     this.endCommand();
   }
 
-  // --- cross-floor travel: elevator IoT call + map switch on arrival ---
+  // --- cross-floor travel: call the elevator through the building integration, switch maps on arrival ---
   async rideElevator(target, token) {
     const el = this.elevator;
     const from = this.floor;
     const fromId = FLOORS[from].id;
     const toId = FLOORS[target].id;
     const landing = { id: `${fromId}-elevator`, floor: from, name: `${fromId} 電梯廳`, x: ELEVATOR.landingX, z: 0, yaw: Math.PI, via: [] };
+    const before = this.activity;
     this.rideTarget = target;
     this.setActivity("move", "前往電梯", `${fromId} → ${toId}`);
     emit("log", { tag: "nav", html: `跨樓層路徑 ${fromId} → 電梯 → ${toId}` });
@@ -385,7 +387,7 @@ export class Kachaka {
 
     this.setActivity("lift", "等待電梯", `呼叫至 ${fromId}`);
     this.startCommand("elevator.call", `floor="${fromId}"`, false);
-    emit("log", { tag: "lift", html: `電梯 IoT API：呼叫至 <b>${fromId}</b>` });
+    emit("log", { tag: "lift", html: `電梯系統串接：呼叫至 <b>${fromId}</b>` });
     await el.callTo(from, this.sim, token);
     this.say("機器人進入電梯，請稍候。");
     this.setActivity("lift", "進入電梯", `${fromId} → ${toId}`);
@@ -411,6 +413,7 @@ export class Kachaka {
     this.exitVia = [];
     this.endCommand();
     this.rideTarget = null;
+    this.setActivity(before.kind, before.label, before.detail);
     emit("ride", { from, to: target });
   }
 
@@ -479,6 +482,11 @@ export class Kachaka {
   }
 
   #followPath(dt) {
+    if (this.hold) {
+      this.v = approach(this.v, 0, LINEAR_ACC * 2 * dt);
+      this.w = approach(this.w, 0, ANGULAR_ACC * dt);
+      return;
+    }
     const p = this.path[this.pathIndex];
     if (!p) {
       this.path = [];
@@ -718,6 +726,7 @@ export class Kachaka {
     this.path = [];
     this.inElevator = false;
     this.rideTarget = null;
+    this.hold = false;
     this.mutedSensors = false;
     this.onCharger = onCharger;
     this.blocked = false;

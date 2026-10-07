@@ -80,7 +80,7 @@ export class Hospital {
     f.group.position.y = f.y;
 
     this.#shell(f);
-    [this.#floor1, this.#floor2, this.#floorWard, this.#floorWard][index].call(this, f);
+    [this.#floor1, this.#floor2, this.#floorCare, this.#floorCare][index].call(this, f);
 
     f.group.add(f.batch.build(mats));
     f.batch = null;
@@ -288,7 +288,7 @@ export class Hospital {
   }
 
   #headwall(f, cx) {
-    // medical gas / nurse-call rail behind each pair of beds
+    // nurse-call rail behind each pair of beds
     addBox(f.batch, "accentSoft", cx - 2.0, cx + 2.0, 1.12, 1.3, -4.95, -4.9);
     for (const bx of [cx - 1.1, cx + 1.1]) {
       for (const dx of [-0.24, -0.08, 0.08, 0.24]) {
@@ -297,16 +297,111 @@ export class Hospital {
     }
   }
 
+  #wardrobe(f, x, z) {
+    addRBox(f.batch, "wood", x, 0, z, 0.56, 1.8, 0.5, 0, 0.02);
+    addBox(f.batch, "metal", x - 0.012, x + 0.012, 0.9, 1.12, z + 0.25, z + 0.27);
+    this.#shadow(f, x, z, 0.85, 0.8);
+    this.#obstacle(f, x - 0.28, x + 0.28, z - 0.25, z + 0.25);
+  }
+
+  #wheelchair(f, x, z, rotY = 0) {
+    const b = f.batch;
+    const m = place(x, 0, z, rotY);
+    const at = (lx, lz) => new THREE.Vector3(lx, 0, lz).applyMatrix4(m);
+    const seat = at(0, 0);
+    b.add("seat", geo.box(), place(seat.x, 0.48, seat.z, rotY, 0.44, 0.06, 0.44));
+    const back = at(-0.2, 0);
+    b.add("seat", geo.box(), place(back.x, 0.75, back.z, rotY, 0.05, 0.48, 0.44));
+    for (const side of [-1, 1]) {
+      const w = at(-0.05, side * 0.26);
+      b.add("dark", geo.cyl(20), place(w.x, 0.3, w.z, rotY, 0.6, 0.035, 0.6, Math.PI / 2));
+      const c = at(0.2, side * 0.2);
+      b.add("dark", geo.cyl(10), place(c.x, 0.07, c.z, rotY, 0.14, 0.03, 0.14, Math.PI / 2));
+    }
+    this.#shadow(f, x, z, 0.9, 0.9, rotY);
+    this.#obstacle(f, x - 0.32, x + 0.32, z - 0.32, z + 0.32);
+  }
+
+  #table(f, x, z, w, d, chairs = []) {
+    addRBox(f.batch, "wood", x, 0.72, z, w, 0.05, d, 0, 0.02);
+    for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const lx = x + dx * (w / 2 - 0.08);
+      const lz = z + dz * (d / 2 - 0.08);
+      addBox(f.batch, "metal", lx - 0.02, lx + 0.02, 0, 0.72, lz - 0.02, lz + 0.02);
+    }
+    this.#shadow(f, x, z, w + 0.5, d + 0.5);
+    this.#obstacle(f, x - w / 2, x + w / 2, z - d / 2, z + d / 2);
+    for (const [cx, cz, rotY] of chairs) this.#chair(f, cx, cz, rotY);
+  }
+
+  // counter with a pass-through gap + back desk (nurse station / care station)
+  #station(f, label) {
+    this.#counter(f, -4.1, -0.62, 1.58, 2.12, 1.08);
+    this.#counter(f, 0.22, 1.25, 1.58, 2.12, 1.08);
+    this.#counter(f, -4.1, 1.25, 3.95, 4.5, 0.76);
+    for (const x of [-3.3, -1.9, 0.5]) this.#monitor(f, x, 0.76, 4.3, -Math.PI / 2);
+    this.#monitor(f, -2.6, 1.08, 1.9, Math.PI / 2);
+    this.#chair(f, -3.3, 3.45, Math.PI / 2);
+    this.#chair(f, -1.9, 3.45, Math.PI / 2);
+    this.#floorDecal(f, label, -2.4, 2.75, 1.0);
+    this.staffSpots[`${f.id}-staffA`] = { floor: f.index, x: -2.6, z: 2.8, yaw: Math.PI / 2 };
+    this.staffSpots[`${f.id}-staffB`] = { floor: f.index, x: -1.2, z: 3.35, yaw: -Math.PI / 2 };
+    this.staffSpots[`${f.id}-pickup`] = { floor: f.index, x: -0.2, z: 2.05, yaw: Math.PI / 2 };
+    this.#loc(f, "station", `${f.id} ${label}`, -0.2, 1.3, -Math.PI / 2, []);
+  }
+
+  // four residents' rooms on the back side, two care beds each
+  #residentRooms(f, wheelchairs = []) {
+    const n = f.index + 1; // room numbers 2xx / 3xx / 4xx
+    const residents = RESIDENTS[f.id] || {};
+    ROOM_CENTERS.forEach((cx, r) => {
+      const room = `${n}0${r + 1}`;
+      this.#floorDecal(f, room, cx, -0.55, 0.8);
+      this.#headwall(f, cx);
+      if (wheelchairs.includes(r)) this.#wheelchair(f, cx + 1.95, -2.35, Math.PI);
+      ["A", "B"].forEach((side, s) => {
+        const bx = cx + (s === 0 ? -1.1 : 1.1);
+        const bz = -3.9;
+        this.#bed(f, bx, bz);
+        this.#cabinet(f, bx + (s === 0 ? -0.78 : 0.78), -4.62);
+        this.#wardrobe(f, cx + (s === 0 ? -1.85 : 1.85), -1.45);
+        const id = `${room}-${side}`;
+        const data = residents[id] || null;
+        this.beds.set(id, {
+          id,
+          room,
+          floor: f.index,
+          x: bx,
+          z: bz,
+          chest: { x: bx, y: 0.76, z: -4.28 },
+          patient: data ? { ...data, bed: id } : null,
+          bedside: this.#loc(f, `${room}${side}-bedside`, `${id} 床邊`, cx + (s === 0 ? -0.12 : 0.12), -4.25, s === 0 ? Math.PI : 0, [[cx, CORRIDOR.minZ], [cx, -2.3]]),
+          nurseSpot: { x: bx, z: -2.48, yaw: Math.PI / 2 },
+        });
+      });
+    });
+  }
+
+  // utility room on the front-left, behind a wall with a door
+  #utility(f, label) {
+    this.#wallRun(f, "x", CORRIDOR.maxZ, PLATE.minX, -4.5, [[-6.75, 1.2]]);
+    this.#wall(f, -4.5, CORRIDOR.maxZ, -4.5, PLATE.maxZ);
+    this.#rack(f, -8.0, 4.55, 1.3, 0.5, 1.5, 0, 4, ["sheet", "boxA"]);
+    addRBox(f.batch, "frame", -6.0, 0, 3.6, 0.7, 0.95, 1.0, 0, 0.05);
+    this.#obstacle(f, -6.35, -5.65, 3.1, 4.1);
+    this.#floorDecal(f, label, -6.75, 1.75, 0.9);
+  }
+
   // ------------------------------------------------------------------ 1F
   #floor1(f) {
     const b = f.batch;
     const [c1, c2, c3, c4] = ROOM_CENTERS;
-    this.#floorDecal(f, "藥局", c1, -0.55, 1.0);
+    this.#floorDecal(f, "醫務室藥局", c1, -0.55, 1.25);
     this.#floorDecal(f, "機器人站", c2, -0.55, 1.2);
-    this.#floorDecal(f, "診間 101", c3, -0.55, 1.2);
-    this.#floorDecal(f, "診間 102", c4, -0.55, 1.2);
+    this.#floorDecal(f, "醫務室", c3, -0.55, 1.0);
+    this.#floorDecal(f, "復健室", c4, -0.55, 1.0);
 
-    // pharmacy: racks on the back and left walls, island counter
+    // dispensary: racks on the back and left walls, island counter
     for (const x of [-8.15, -6.95, -5.75]) this.#rack(f, x, -4.72, 1.05, 0.38, 1.85, 0, 5);
     this.#rack(f, -8.72, -3.3, 1.1, 0.38, 1.85, Math.PI / 2, 5);
     this.#counter(f, -7.9, -6.6, -3.45, -2.95, 0.95);
@@ -321,36 +416,53 @@ export class Hospital {
     this.#floorDecal(f, "充電", -1.4, -3.9, 0.55);
     this.charger = { floor: 0, x: -1.4, z: -4.45, yaw: -Math.PI / 2 };
     this.#loc(f, "charger", "1F 充電座", -1.4, -3.75, -Math.PI / 2, [[c2, CORRIDOR.minZ], [c2, -2.4], [-1.4, -3.0]]);
-    this.#loc(f, "station", "1F 機器人站", c2, -2.4, -Math.PI / 2, [[c2, CORRIDOR.minZ]]);
     this.shelfHomes = {
       vs: { floor: 0, x: -3.3, z: -3.4, yaw: Math.PI / 2, via: [[c2, CORRIDOR.minZ], [c2, -1.9]] },
       med: { floor: 0, x: -5.35, z: -2.25, yaw: 0, via: [[c1, CORRIDOR.minZ], [c1, -1.75]] },
     };
-    // clinic rooms
-    for (const cx of [c3, c4]) {
-      this.#desk(f, cx - 0.9, -4.3);
-      this.#monitor(f, cx - 0.9, 0.76, -4.45, Math.PI / 2);
-      this.#chair(f, cx - 0.9, -3.65, -Math.PI / 2);
-      addRBox(b, "sheet", cx + 1.05, 0, -3.5, 0.75, 0.62, 1.9, 0, 0.06);
-      this.#obstacle(f, cx + 0.67, cx + 1.43, -4.45, -2.55);
-      this.#cabinet(f, cx + 1.7, -4.7);
+    // clinic: desk, exam bed, cabinet
+    this.#desk(f, c3 - 0.9, -4.3);
+    this.#monitor(f, c3 - 0.9, 0.76, -4.45, Math.PI / 2);
+    this.#chair(f, c3 - 0.9, -3.65, -Math.PI / 2);
+    addRBox(b, "sheet", c3 + 1.05, 0, -3.5, 0.75, 0.62, 1.9, 0, 0.06);
+    this.#obstacle(f, c3 + 0.67, c3 + 1.43, -4.45, -2.55);
+    this.#cabinet(f, c3 + 1.7, -4.7);
+    this.staffSpots.doctor = { floor: 0, x: c3 + 0.1, z: -3.3, yaw: Math.PI };
+    // rehab room: parallel bars, treatment table, exercise bike
+    for (const z of [-3.25, -2.65]) {
+      addBox(b, "metal", c4 - 1.6, c4 + 0.6, 0.88, 0.92, z - 0.02, z + 0.02);
+      for (const x of [c4 - 1.6, c4 + 0.6]) addBox(b, "metal", x - 0.025, x + 0.025, 0, 0.9, z - 0.025, z + 0.025);
     }
-    // lobby: information desk, waiting rows, entrance
+    addBox(b, "accentSoft", c4 - 1.7, c4 + 0.7, 0.012, 0.03, -3.4, -2.5);
+    this.#obstacle(f, c4 - 1.6, c4 + 0.6, -3.27, -2.63);
+    addRBox(b, "sheet", c4 + 1.3, 0, -4.15, 0.85, 0.5, 1.8, 0, 0.05);
+    this.#obstacle(f, c4 + 0.87, c4 + 1.73, -5.0, -3.25);
+    addRBox(b, "dark", c4 - 1.3, 0, -4.45, 0.9, 0.55, 0.38, 0, 0.05);
+    addRBox(b, "dark", c4 - 0.95, 0.55, -4.45, 0.12, 0.6, 0.3, 0, 0.03);
+    this.#obstacle(f, c4 - 1.75, c4 - 0.85, -4.64, -4.26);
+    // lobby: information desk, family lounge, dining room, entrance
     this.#counter(f, -3.6, -1.2, 2.55, 3.15, 1.05);
     this.#monitor(f, -2.4, 1.05, 2.95, -Math.PI / 2);
     this.staffSpots.reception = { floor: 0, x: -2.4, z: 3.75, yaw: Math.PI / 2 };
-    for (let r = 0; r < 3; r++) {
-      for (let k = 0; k < 5; k++) this.#chair(f, 1.6 + k * 0.62, 2.35 + r * 0.95, Math.PI / 2, r === 1 ? "seat2" : "seat");
-    }
+    this.#sofa(f, 2.1, 2.95, 1.9);
+    this.#sofa(f, 2.1, 4.5, 1.9, Math.PI);
+    addRBox(b, "wood", 2.1, 0.38, 3.75, 1.0, 0.05, 0.45, 0, 0.02);
+    this.#obstacle(f, 1.15, 3.05, 2.55, 4.9);
     this.seats = [
-      { floor: 0, x: 2.22, z: 2.35, yaw: Math.PI / 2 },
-      { floor: 0, x: 3.46, z: 3.3, yaw: Math.PI / 2 },
+      { floor: 0, x: 1.65, z: 3.0, yaw: -Math.PI / 2 },
+      { floor: 0, x: 2.5, z: 4.45, yaw: Math.PI / 2 },
     ];
-    for (let k = 0; k < 4; k++) this.#chair(f, -8.3 + k * 0.62, 3.6, Math.PI / 2);
-    this.#floorDecal(f, "領藥等候", -7.4, 2.4, 1.1);
+    this.#floorDecal(f, "家屬會客區", 2.1, 1.7, 1.3);
+    this.#table(f, -7.5, 2.65, 1.1, 0.75, [
+      [-7.8, 2.1, -Math.PI / 2], [-7.2, 2.1, -Math.PI / 2], [-7.8, 3.2, Math.PI / 2], [-7.2, 3.2, Math.PI / 2],
+    ]);
+    this.#table(f, -5.8, 3.95, 1.1, 0.75, [
+      [-6.1, 3.4, -Math.PI / 2], [-5.5, 3.4, -Math.PI / 2], [-6.1, 4.5, Math.PI / 2], [-5.5, 4.5, Math.PI / 2],
+    ]);
+    this.#floorDecal(f, "餐廳", -6.4, 1.65, 0.8);
     this.#plant(f, 8.4, 1.6);
     this.#plant(f, -4.9, 4.5);
-    this.#plant(f, 0.7, 4.5, 0.85);
+    this.#plant(f, 4.4, 4.5, 0.85);
     this.#wallRun(f, "x", PLATE.maxZ, PLATE.minX, PLATE.maxX, [[7.4, 2.2]], 0.9);
     addBox(b, "glass", PLATE.minX, 6.3, 0.92, WALL_HIGH, PLATE.maxZ - 0.02, PLATE.maxZ + 0.02);
     addBox(b, "glass", 8.5, PLATE.maxX, 0.92, WALL_HIGH, PLATE.maxZ - 0.02, PLATE.maxZ + 0.02);
@@ -364,112 +476,44 @@ export class Hospital {
   // ------------------------------------------------------------------ 2F
   #floor2(f) {
     const b = f.batch;
-    const [c1, c2, c3, c4] = ROOM_CENTERS;
-    this.#floorDecal(f, "檢驗科", c1, -0.55, 1.0);
-    this.#floorDecal(f, "採血站", c2, -0.55, 1.0);
-    this.#floorDecal(f, "中央供應", c3, -0.55, 1.15);
-    this.#floorDecal(f, "辦公室", c4, -0.55, 1.0);
-    // lab benches + analyzers
-    this.#counter(f, -8.8, -4.75, -4.95, -4.35, 0.92, "white");
-    for (const x of [-8.2, -7.1, -5.9]) {
-      addRBox(b, "white", x, 0.92, -4.65, 0.7, 0.55, 0.5, 0, 0.05);
-      addBox(b, "screen", x - 0.18, x + 0.18, 1.2, 1.36, -4.4, -4.38);
-    }
-    this.#counter(f, -8.0, -5.6, -3.2, -2.6, 0.92, "white");
-    addRBox(b, "white", -5.05, 0, -3.0, 0.62, 1.8, 0.62, 0, 0.04); // reagent fridge
-    this.#obstacle(f, -5.36, -4.74, -3.31, -2.69);
-    this.staffSpots.labtech = { floor: 1, x: -6.9, z: -3.75, yaw: Math.PI / 2 };
-    // phlebotomy chairs
-    for (const x of [-3.7, -2.25, -0.8]) {
-      this.#chair(f, x, -4.1, -Math.PI / 2, "seat");
-      addRBox(b, "white", x + 0.45, 0, -4.1, 0.12, 0.65, 0.5, 0, 0.03);
-    }
-    // central supply racks + linen carts
-    this.#rack(f, 0.95, -4.7, 1.2, 0.42, 1.9, 0, 5);
-    this.#rack(f, 2.35, -4.7, 1.2, 0.42, 1.9, 0, 5);
-    this.#rack(f, 3.75, -4.7, 1.2, 0.42, 1.9, 0, 5);
-    this.#rack(f, 3.9, -2.9, 0.9, 0.5, 1.1, 0, 3, ["boxA", "sheet"]);
-    // offices
-    for (const [x, z] of [[5.6, -4.3], [7.9, -4.3], [5.6, -2.6], [7.9, -2.6]]) {
-      this.#desk(f, x, z);
-      this.#monitor(f, x, 0.76, z - 0.15, Math.PI / 2);
-    }
-    this.staffSpots.doctor = { floor: 1, x: 6.75, z: -1.75, yaw: Math.PI / 2 };
-    // front: meeting room, waiting, rest area
-    this.#wallRun(f, "x", CORRIDOR.maxZ, PLATE.minX, -4.5, [[-6.75, 1.2]]);
-    this.#wall(f, -4.5, CORRIDOR.maxZ, -4.5, PLATE.maxZ);
-    addRBox(b, "wood", -6.75, 0.72, 3.2, 2.6, 0.05, 1.1, 0, 0.03);
-    this.#obstacle(f, -8.05, -5.45, 2.65, 3.75);
-    for (const dx of [-0.9, 0, 0.9]) {
-      this.#chair(f, -6.75 + dx, 2.3, -Math.PI / 2);
-      this.#chair(f, -6.75 + dx, 4.1, Math.PI / 2);
-    }
-    for (let k = 0; k < 5; k++) this.#chair(f, -3.4 + k * 0.62, 3.9, Math.PI / 2);
-    this.#sofa(f, 5.5, 4.3, 2.2);
-    this.#sofa(f, 2.8, 4.3, 1.6);
-    this.#plant(f, 8.3, 4.4);
-    this.#plant(f, -0.2, 4.4, 0.9);
+    this.#residentRooms(f, [1]);
+    this.#utility(f, "沐浴間");
+    this.#station(f, "照服站");
+    // activity room, open to the corridor
+    this.#table(f, 3.8, 3.0, 1.4, 0.8, [
+      [3.3, 2.45, -Math.PI / 2], [4.3, 2.45, -Math.PI / 2], [3.3, 3.55, Math.PI / 2], [4.3, 3.55, Math.PI / 2],
+    ]);
+    this.#table(f, 6.6, 3.0, 1.4, 0.8, [
+      [6.1, 2.45, -Math.PI / 2], [7.1, 2.45, -Math.PI / 2], [6.1, 3.55, Math.PI / 2], [7.1, 3.55, Math.PI / 2],
+    ]);
+    addRBox(b, "dark", 8.9, 0.9, 3.2, 0.06, 0.65, 1.15, 0, 0.02);
+    this.#plant(f, 2.0, 4.5, 0.85);
+    this.#plant(f, 8.4, 4.5, 0.85);
+    this.#floorDecal(f, "活動室", 5.2, 1.7, 0.9);
+    this.activitySeats = [
+      { floor: 1, x: 3.3, z: 2.45, yaw: -Math.PI / 2 },
+      { floor: 1, x: 4.3, z: 3.55, yaw: Math.PI / 2 },
+      { floor: 1, x: 7.1, z: 3.55, yaw: Math.PI / 2 },
+    ];
+    // controlled exit next to the elevator lobby
+    this.#floorDecal(f, "出入管制", -7.75, -0.55, 0.95);
+    addBox(b, "dark", -8.95, -8.9, 1.05, 1.35, -1.42, -1.26);
+    addBox(b, "screen", -8.9, -8.88, 1.22, 1.3, -1.38, -1.3);
+    this.exitPoint = { x: -6.9, z: 0.65 };
     this.patrol = [
-      this.#loc(f, "cp-lab", "2F 檢驗科門口", c1, 0, Math.PI / 2),
-      this.#loc(f, "cp-draw", "2F 採血站", c2, 0, Math.PI / 2),
-      this.#loc(f, "cp-supply", "2F 中央供應室", c3, 0, Math.PI / 2),
+      this.#loc(f, "cp-201", "2F 201 室門口", ROOM_CENTERS[0], 0, Math.PI / 2),
+      this.#loc(f, "cp-202", "2F 202 室門口", ROOM_CENTERS[1], 0, Math.PI / 2),
+      this.#loc(f, "cp-activity", "2F 活動室", 5.2, 0, -Math.PI / 2),
       this.#loc(f, "cp-east", "2F 東側走廊端", 8.1, 0, Math.PI),
     ];
   }
 
   // ----------------------------------------------------------- 3F / 4F
-  #floorWard(f) {
+  #floorCare(f) {
     const b = f.batch;
-    const n = f.index + 1; // room numbers 3xx / 4xx
-    const patients = WARD_PATIENTS[f.id];
-    ROOM_CENTERS.forEach((cx, r) => {
-      const room = `${n}0${r + 1}`;
-      this.#floorDecal(f, room, cx, -0.55, 0.8);
-      this.#headwall(f, cx);
-      ["A", "B"].forEach((side, s) => {
-        const bx = cx + (s === 0 ? -1.1 : 1.1);
-        const bz = -3.9;
-        this.#bed(f, bx, bz);
-        this.#cabinet(f, bx + (s === 0 ? -0.78 : 0.78), -4.62);
-        this.#chair(f, bx + (s === 0 ? -0.72 : 0.72), -1.7, s === 0 ? 0 : Math.PI, "seat");
-        const id = `${room}-${side}`;
-        const data = patients[id] || null;
-        const bed = {
-          id,
-          room,
-          floor: f.index,
-          x: bx,
-          z: bz,
-          chest: { x: bx, y: 0.76, z: -4.28 },
-          patient: data ? { ...data, bed: id } : null,
-          bedside: this.#loc(f, `${room}${side}-bedside`, `${id} 床邊`, cx + (s === 0 ? -0.12 : 0.12), -4.25, s === 0 ? Math.PI : 0, [[cx, CORRIDOR.minZ], [cx, -2.3]]),
-          nurseSpot: { x: bx, z: -2.48, yaw: Math.PI / 2 },
-        };
-        this.beds.set(id, bed);
-      });
-    });
-    // utility room (front-left), nurse station, medication room, lounge
-    this.#wallRun(f, "x", CORRIDOR.maxZ, PLATE.minX, -4.5, [[-6.75, 1.2]]);
-    this.#wall(f, -4.5, CORRIDOR.maxZ, -4.5, PLATE.maxZ);
-    this.#rack(f, -8.0, 4.55, 1.3, 0.5, 1.5, 0, 4, ["sheet", "boxA"]);
-    addRBox(b, "frame", -6.0, 0, 3.6, 0.7, 0.95, 1.0, 0, 0.05);
-    this.#obstacle(f, -6.35, -5.65, 3.1, 4.1);
-    this.#floorDecal(f, "被服室", -6.75, 1.75, 0.9);
-
-    // nurse station: front counter with a pass-through gap, back desk
-    this.#counter(f, -4.1, -0.62, 1.58, 2.12, 1.08);
-    this.#counter(f, 0.22, 1.25, 1.58, 2.12, 1.08);
-    this.#counter(f, -4.1, 1.25, 3.95, 4.5, 0.76);
-    for (const x of [-3.3, -1.9, 0.5]) this.#monitor(f, x, 0.76, 4.3, -Math.PI / 2);
-    this.#monitor(f, -2.6, 1.08, 1.9, Math.PI / 2);
-    this.#chair(f, -3.3, 3.45, Math.PI / 2);
-    this.#chair(f, -1.9, 3.45, Math.PI / 2);
-    this.#floorDecal(f, "護理站", -2.4, 2.75, 1.0);
-    this.staffSpots[`${f.id}-nurseA`] = { floor: f.index, x: -2.6, z: 2.8, yaw: Math.PI / 2 };
-    this.staffSpots[`${f.id}-nurseB`] = { floor: f.index, x: -1.2, z: 3.35, yaw: -Math.PI / 2 };
-    this.staffSpots[`${f.id}-pickup`] = { floor: f.index, x: -0.2, z: 2.05, yaw: Math.PI / 2 };
-    this.#loc(f, "nurse", `${f.id} 護理站`, -0.2, 1.3, -Math.PI / 2, []);
-
+    this.#residentRooms(f, f.index === 2 ? [0, 2] : [1]);
+    this.#utility(f, "被服室");
+    this.#station(f, "護理站");
     this.#wallRun(f, "x", CORRIDOR.maxZ, 1.5, 5, [[3.25, 1.2]]);
     this.#wall(f, 1.5, CORRIDOR.maxZ, 1.5, PLATE.maxZ);
     this.#wall(f, 5, CORRIDOR.maxZ, 5, PLATE.maxZ);
@@ -486,24 +530,29 @@ export class Hospital {
   }
 }
 
-// fictional, de-identified ward census (simulated data)
-const WARD_PATIENTS = {
+// fictional, de-identified residents (simulated data)
+const RESIDENTS = {
+  "2F": {
+    "201-A": { name: "劉○清", title: "劉伯伯", age: 89, sex: "男", hr: 70, rr: 16 },
+    "202-B": { name: "孫○蘭", title: "孫奶奶", age: 84, sex: "女", hr: 76, rr: 17 },
+    "204-A": { name: "高○福", title: "高伯伯", age: 92, sex: "男", hr: 68, rr: 15 },
+  },
   "3F": {
-    "301-A": { name: "林○明", title: "林伯伯", age: 78, sex: "男", hr: 72, rr: 16 },
-    "301-B": { name: "陳○美", title: "陳奶奶", age: 84, sex: "女", hr: 81, rr: 18 },
-    "302-A": { name: "王○德", title: "王先生", age: 66, sex: "男", hr: 67, rr: 15 },
-    "302-B": { name: "張○蘭", title: "張奶奶", age: 88, sex: "女", hr: 98, rr: 27 },
-    "303-A": { name: "李○華", title: "李阿姨", age: 71, sex: "女", hr: 76, rr: 17 },
-    "304-A": { name: "吳○雄", title: "吳伯伯", age: 80, sex: "男", hr: 70, rr: 16 },
-    "304-B": { name: "鄭○玉", title: "鄭奶奶", age: 90, sex: "女", hr: 88, rr: 19 },
+    "301-A": { name: "林○明", title: "林伯伯", age: 88, sex: "男", hr: 72, rr: 16 },
+    "301-B": { name: "陳○德", title: "陳伯伯", age: 91, sex: "男", hr: 81, rr: 18 },
+    "302-A": { name: "王○山", title: "王伯伯", age: 86, sex: "男", hr: 67, rr: 15 },
+    "302-B": { name: "張○華", title: "張伯伯", age: 93, sex: "男", hr: 98, rr: 27 },
+    "303-A": { name: "李○生", title: "李伯伯", age: 84, sex: "男", hr: 76, rr: 17 },
+    "304-A": { name: "吳○雄", title: "吳伯伯", age: 89, sex: "男", hr: 70, rr: 16 },
+    "304-B": { name: "趙○玉", title: "趙奶奶", age: 87, sex: "女", hr: 88, rr: 19 },
   },
   "4F": {
-    "401-A": { name: "黃○雄", title: "黃爺爺", age: 91, sex: "男", hr: 78, rr: 18 },
+    "401-A": { name: "黃○雄", title: "黃爺爺", age: 95, sex: "男", hr: 78, rr: 18 },
     "401-B": { name: "周○英", title: "周奶奶", age: 86, sex: "女", hr: 74, rr: 17 },
-    "402-A": { name: "許○昌", title: "許伯伯", age: 79, sex: "男", hr: 113, rr: 22 },
-    "402-B": { name: "蔡○珠", title: "蔡阿嬤", age: 93, sex: "女", hr: 69, rr: 16 },
-    "403-A": { name: "謝○輝", title: "謝先生", age: 69, sex: "男", hr: 75, rr: 18 },
-    "403-B": { name: "楊○雲", title: "楊奶奶", age: 82, sex: "女", hr: 83, rr: 19 },
-    "404-A": { name: "賴○德", title: "賴伯伯", age: 77, sex: "男", hr: 66, rr: 15 },
+    "402-A": { name: "許○昌", title: "許伯伯", age: 90, sex: "男", hr: 113, rr: 22 },
+    "402-B": { name: "蔡○珠", title: "蔡奶奶", age: 92, sex: "女", hr: 69, rr: 16 },
+    "403-A": { name: "謝○輝", title: "謝伯伯", age: 85, sex: "男", hr: 75, rr: 18 },
+    "403-B": { name: "楊○雲", title: "楊奶奶", age: 88, sex: "女", hr: 83, rr: 19 },
+    "404-A": { name: "賴○德", title: "賴伯伯", age: 87, sex: "男", hr: 66, rr: 15 },
   },
 };

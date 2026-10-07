@@ -77,6 +77,8 @@ export function addRBox(batch, key, x, y0, z, w, h, d, rotY = 0, r = 0.08) {
 }
 
 // --- canvas textures ---
+export const CANVAS_FONT = "'Barlow Semi Condensed', 'PingFang TC', 'Microsoft JhengHei', 'Noto Sans TC', 'Noto Sans CJK TC', sans-serif";
+
 export function contactShadowTexture() {
   const c = document.createElement("canvas");
   c.width = c.height = 128;
@@ -92,7 +94,7 @@ export function contactShadowTexture() {
   return t;
 }
 
-export function textTexture(text, { w = 256, h = 128, color = "#1d2b29", bg = null, font = "700 72px 'Barlow Semi Condensed', 'Noto Sans TC', sans-serif", align = "center" } = {}) {
+export function textTexture(text, { w = 256, h = 128, color = "#1d2b29", bg = null, font = `700 72px ${CANVAS_FONT}`, align = "center" } = {}) {
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;

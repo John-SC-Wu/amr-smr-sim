@@ -14,8 +14,9 @@ import { Missions } from "./missions.js";
 import { Dashboard } from "./dashboard.js";
 
 document.documentElement.lang = "zh-Hant";
-// canvas textures (signage, floor decals) need the web fonts before they are drawn
-await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 1500))]);
+// canvas textures (signage, floor decals) need the local fonts before they are drawn
+const fontFaces = ["700 20px 'Barlow Semi Condensed'", "600 20px 'Barlow Semi Condensed'", "400 12px 'JetBrains Mono'"];
+await Promise.race([Promise.all(fontFaces.map((f) => document.fonts.load(f))).catch(() => {}), new Promise((r) => setTimeout(r, 1500))]);
 
 const stage = document.getElementById("stage");
 const canvas = document.getElementById("scene");
@@ -97,17 +98,21 @@ const sensor = new VitalSensor({ cart: shelves.vs, sim });
 scene.add(sensor.group);
 
 const S = hospital.staffSpots;
+const A = hospital.activitySeats;
 const staff = {
   pharmacist: new Person({ id: "pharmacist", role: "pharmacist", name: "藥師 志明", ...S.pharmacist, pose: "type" }),
   reception: new Person({ id: "reception", role: "reception", name: "服務台 小美", ...S.reception, skin: 1 }),
-  labtech: new Person({ id: "labtech", role: "labtech", name: "醫檢師 淑芬", ...S.labtech, pose: "type", skin: 2 }),
-  doctor: new Person({ id: "doctor", role: "doctor", name: "黃醫師", ...S.doctor, pose: "check", skin: 1 }),
-  "3F-nurseA": new Person({ id: "3F-nurseA", role: "nurse", name: "護理師 雅婷", ...S["3F-nurseA"], pose: "type" }),
-  "3F-nurseB": new Person({ id: "3F-nurseB", role: "nurseB", name: "護理師 佩珊", ...S["3F-nurseB"], pose: "type", skin: 2 }),
-  "4F-nurseA": new Person({ id: "4F-nurseA", role: "nurse", name: "護理師 怡君", ...S["4F-nurseA"], pose: "type", skin: 1 }),
-  "4F-nurseB": new Person({ id: "4F-nurseB", role: "nurseB", name: "護理師 品妤", ...S["4F-nurseB"], pose: "type" }),
+  doctor: new Person({ id: "doctor", role: "doctor", name: "醫務室 黃醫師", ...S.doctor, pose: "check", skin: 1 }),
   visitor1: new Person({ id: "visitor1", role: "visitor", name: "", ...hospital.seats[0], sitting: true, skin: 1 }),
   visitor2: new Person({ id: "visitor2", role: "visitor2", name: "", ...hospital.seats[1], sitting: true, skin: 2 }),
+  "2F-carer": new Person({ id: "2F-carer", role: "carer", name: "照服員 阿芳", ...S["2F-staffA"], pose: "type", skin: 2 }),
+  wanderer: new Person({ id: "wanderer", role: "resident", name: "住民 陳伯伯", ...A[0], sitting: true }),
+  "2F-resident2": new Person({ id: "2F-resident2", role: "resident2", name: "", ...A[1], sitting: true, skin: 1 }),
+  "2F-resident3": new Person({ id: "2F-resident3", role: "resident", name: "", ...A[2], sitting: true, skin: 2 }),
+  "3F-nurseA": new Person({ id: "3F-nurseA", role: "nurse", name: "護理師 雅婷", ...S["3F-staffA"], pose: "type" }),
+  "3F-nurseB": new Person({ id: "3F-nurseB", role: "nurseB", name: "護理師 佩珊", ...S["3F-staffB"], pose: "type", skin: 2 }),
+  "4F-nurseA": new Person({ id: "4F-nurseA", role: "nurse", name: "護理師 怡君", ...S["4F-staffA"], pose: "type", skin: 1 }),
+  "4F-carer": new Person({ id: "4F-carer", role: "carer", name: "照服員 美玲", ...S["4F-staffB"], pose: "type" }),
 };
 const staffList = Object.values(staff);
 for (const p of staffList) scene.add(p.group);
@@ -130,7 +135,7 @@ const missions = new Missions(world);
 world.missions = missions;
 const dashboard = new Dashboard(world);
 
-emit("log", { tag: "api", html: "已連線 Kachaka API（gRPC :26400）・電梯 IoT・護理資訊系統 MQTT" });
+emit("log", { tag: "api", html: "已連線 Kachaka API（gRPC :26400）・電梯系統・護理資訊系統 MQTT" });
 emit("log", { tag: "api", html: `<code>get_battery_info()</code> → ${Math.round(robot.battery)}%・充電中` });
 
 // --- sizing ---
