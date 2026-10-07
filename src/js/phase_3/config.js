@@ -55,13 +55,16 @@ export const NURSE_MINUTES = { vitals: 6, delivery: 20, patrol: 10, remeasure: 6
 // two-way corridor, keep right: eastbound (+x) robots run on the +z side
 export const LANES = { east: 0.3, west: -0.3 };
 
-// per-robot identity; start batteries differ so battery-aware dispatch shows up early
+// per-robot identity; start batteries differ so battery-aware dispatch shows up early.
+// Colours are categorical slots 1-5 validated for colour-vision deficiency (adjacent pairs,
+// light and dark; the first three also pass all-pairs). `color` is the light step used in 3D;
+// the page uses var(--robot-N) so dark mode gets its own validated step.
 export const ROBOT_DEFS = [
-  { id: "K1", serial: "KCK-PRO-0427", color: "#0f9d8f", battery: 88 },
-  { id: "K2", serial: "KCK-PRO-0431", color: "#e8890c", battery: 66 },
-  { id: "K3", serial: "KCK-PRO-0436", color: "#8b5cf6", battery: 41 },
-  { id: "K4", serial: "KCK-PRO-0442", color: "#2f7ed8", battery: 79 },
-  { id: "K5", serial: "KCK-PRO-0448", color: "#d9468f", battery: 52 },
+  { id: "K1", slot: 1, serial: "KCK-PRO-0427", color: "#2a78d6", battery: 88 },
+  { id: "K2", slot: 2, serial: "KCK-PRO-0431", color: "#eb6834", battery: 66 },
+  { id: "K3", slot: 3, serial: "KCK-PRO-0436", color: "#1baf7a", battery: 41 },
+  { id: "K4", slot: 4, serial: "KCK-PRO-0442", color: "#eda100", battery: 79 },
+  { id: "K5", slot: 5, serial: "KCK-PRO-0448", color: "#e87ba4", battery: 52 },
 ];
 export const MAX_ROBOTS = ROBOT_DEFS.length;
 

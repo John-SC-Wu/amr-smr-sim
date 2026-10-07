@@ -144,8 +144,8 @@ export class VitalSensor {
     this.noise.t += dt;
     if (this.noise.t > 1.8) {
       this.noise.t = 0;
-      this.noise.hr = Math.random() * 2 - 1;
-      this.noise.rr = Math.random() * 2 - 1;
+      this.noise.hr = this.sim.rand() * 2 - 1;
+      this.noise.rr = this.sim.rand() * 2 - 1;
     }
     if (p > 0.18) {
       const k = 1 - p;

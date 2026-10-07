@@ -88,7 +88,8 @@ export class Kachaka {
     this.def = def;
     this.id = def.id;
     this.index = index;
-    this.color = def.color;
+    this.color = def.color; // 3D / canvas
+    this.css = `var(--robot-${def.slot})`; // page elements (theme-aware step)
     this.name = `Kachaka ${def.id}`;
     this.serial = def.serial;
     this.sim = sim;
@@ -123,6 +124,7 @@ export class Kachaka {
     this.ticket = null;
     this.mutedSensors = false;
     this.lastLoc = null;
+    this.enterLoc = null;
 
     // where the robot is in the building's zone system
     this.insideZone = null;
@@ -376,6 +378,25 @@ export class Kachaka {
     this.insideZone = loc.zone;
     this.zoneVia = loc.via;
     this.zoneViaPassed = 0;
+    this.enterLoc = loc;
+    return true;
+  }
+
+  // we hold a room we have not driven into yet, and the robot in our way waits for that same
+  // room at its door: let it go first and queue right behind it (breaks the standoff)
+  #yieldZoneTo(o) {
+    const zone = this.insideZone;
+    const loc = this.enterLoc;
+    if (!zone || this.zoneViaPassed > 0 || !loc || loc.zone !== zone) return false;
+    const g = o.path[o.pathIndex];
+    if (!o.waitInfo || o.waitInfo.kind !== "zone" || !g || g.gateZone !== zone) return false;
+    if (!this.traffic.handOver(zone, this, o)) return false;
+    this.insideZone = null;
+    this.zoneVia = [];
+    this.zoneViaPassed = 0;
+    this.path.splice(this.pathIndex, 0, { x: this.x, z: this.z, gate: () => this.#tryEnter(loc), gateZone: zone });
+    this.blockedRobot = null;
+    emit("log", { tag: "traffic", robot: this, html: `${o.id} 已在 ${this.traffic.name(zone)} 門口等候 → 讓出通行權，排在 ${o.id} 之後` });
     return true;
   }
 
@@ -407,17 +428,25 @@ export class Kachaka {
     const join = { x: sx, z: laneZ, safe: true };
     if (cur) join.pass = () => this.#leaveZone(cur);
     pts.push(join);
+    let inLane = laneZ;
     if (loc.zone) {
       const gate = () => this.#tryEnter(loc);
       let wx = entry[0] - dir * GATE_BACK;
       if (east) wx = Math.max(wx, LOBBY_EDGE);
       const behind = east ? wx <= sx + 0.05 : wx >= sx - 0.05;
-      if (behind) {
+      if (behind && Math.abs(sx - entry[0]) < GATE_BACK - 0.05 && !this.traffic.canTake(loc.zone, this)) {
+        // already at the door but the room is taken: never wait in its doorway; go round to the
+        // gate of the opposite approach (one lane over) and come back from there
+        const ox = east ? entry[0] + GATE_BACK : Math.max(entry[0] - GATE_BACK, LOBBY_EDGE);
+        inLane = east ? LANES.west : LANES.east;
+        P(ox, laneZ);
+        P(ox, inLane, { safe: true, gate, gateZone: loc.zone });
+      } else if (behind) {
         join.gate = gate;
         join.gateZone = loc.zone;
       } else P(wx, laneZ, { safe: true, gate, gateZone: loc.zone });
     }
-    P(entry[0], laneZ);
+    P(entry[0], inLane);
     loc.via.forEach((p, i) => P(p[0], p[1], loc.zone ? { pass: () => (this.zoneViaPassed = i + 1) } : {}));
     P(loc.x, loc.z);
     return cleanPath(pts, this.x, this.z);
@@ -445,6 +474,19 @@ export class Kachaka {
     if (arrived) this.#arrive(loc);
     this.endCommand();
     return arrived;
+  }
+
+  // stop where it stands (task aborted); zones it physically occupies stay held
+  halt() {
+    this.#abortPath();
+    this.v = 0;
+    this.w = 0;
+  }
+
+  setFault(on) {
+    this.ledMat.color.setHex(on ? 0xff3b30 : 0x4ee08b);
+    this.ringMat.color.set(on ? "#ff3b30" : this.color);
+    this.ringMat.opacity = on ? 0.85 : 0.6;
   }
 
   #abortPath() {
@@ -841,6 +883,29 @@ export class Kachaka {
     return this.index < o.index;
   }
 
+  // distance along the remaining route to the point closest to (x, z), if that point is within
+  // `clear` of the route and `reach` of the robot; null otherwise
+  #onRoute(x, z, clear, reach) {
+    let px = this.x;
+    let pz = this.z;
+    let s = 0;
+    for (let i = this.pathIndex; i < this.path.length && s < reach; i++) {
+      const q = this.path[i];
+      const dx = q.x - px;
+      const dz = q.z - pz;
+      const len = Math.hypot(dx, dz);
+      if (len > 1e-6) {
+        const t = THREE.MathUtils.clamp(((x - px) * dx + (z - pz) * dz) / (len * len), 0, 1);
+        const d = Math.hypot(px + dx * t - x, pz + dz * t - z);
+        if (d <= clear && s + t * len <= reach) return s + t * len;
+      }
+      s += len;
+      px = q.x;
+      pz = q.z;
+    }
+    return null;
+  }
+
   // slow down / stop for people and robots ahead (camera + LiDAR detection)
   #yieldFactor() {
     if (this.mutedSensors || this.inElevator) return 1;
@@ -868,10 +933,10 @@ export class Kachaka {
       if (o === this || o.floor !== this.floor || o.inElevator) continue;
       const rx = o.x - this.x;
       const rz = o.z - this.z;
-      const along = rx * f.x + rz * f.z;
-      if (along < 0.05 || along > gap + 0.9) continue;
-      const lat = Math.abs(rx * -f.z + rz * f.x);
-      if (lat > this.halfWidth + o.radius + 0.03) continue;
+      if (rx * f.x + rz * f.z < 0.05) continue;
+      // only a robot on the route still ahead counts (one past the next turn is not in the way)
+      const along = this.#onRoute(o.x, o.z, this.halfWidth + o.radius + 0.03, gap + 0.9);
+      if (along === null) continue;
       if (o.blockedBy === this && this.#outranks(o)) continue;
       // a stationary robot we have waited on for a while sits beside our planned line: creep past
       if (o.mode === "idle" && this.blockedRobot === o && this.sim.time - this.blockedRobotSince > 6) continue;
@@ -902,7 +967,7 @@ export class Kachaka {
       if (this.blockedRobot !== robot) {
         this.blockedRobot = robot;
         this.blockedRobotSince = this.sim.time;
-      }
+      } else if (this.sim.time - this.blockedRobotSince > 4 && this.#yieldZoneTo(robot)) return 0;
       if (this.sim.time - this.lastFollowLog > 20) {
         this.lastFollowLog = this.sim.time;
         emit("log", { tag: "traffic", robot: this, html: `前方 ${robot.id} 距離 ${Math.hypot(robot.x - this.x, robot.z - this.z).toFixed(1)} m，跟車禮讓` });

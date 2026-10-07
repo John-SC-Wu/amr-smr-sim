@@ -109,7 +109,7 @@ async function measureBed(ctx, r, task, bed, sensor, token) {
     await nurseResponds(ctx, r, bed, patient, res, token);
     await r.speak("護理師到了，我先繼續下一項工作。", token);
   } else {
-    if (Math.random() < 0.5) emit("speech", { who: `patient-${bed.id}`, name: patient.data.title, text: "好，謝謝你喔。" });
+    if (ctx.sim.rand() < 0.5) emit("speech", { who: `patient-${bed.id}`, name: patient.data.title, text: "好，謝謝你喔。" });
     const line = again
       ? res.level === "ok"
         ? "複測正常了，已更新護理紀錄。"
@@ -145,17 +145,18 @@ async function nurseResponds(ctx, r, bed, patient, res, token) {
       : `${patient.data.title}，我幫您把床頭搖高一點，呼吸會比較順。`,
   );
   if (hrAlarm) fleet.requestStat(bed, patient);
-  sim.wait(5, token).then(() => {
+  const bg = fleet.token; // follow-up care outlives this robot's task
+  sim.wait(5, bg).then(() => {
     if (r.focusPerson === nurse) r.focusPerson = null;
   }, ignoreCancel);
   (async () => {
-    await sim.wait(16, token);
+    await sim.wait(16, bg);
     if (hrAlarm) patient.hr = Math.max(92, patient.hr - 14);
     else patient.rr = Math.max(19, patient.rr - 6);
     say(nurse, `狀況穩定了，${fleet.settings.remeasureAfter} 分鐘後請機器人複測。`);
     fleet.alertStatus(bed.id, `已處置・${fleet.settings.remeasureAfter} 分鐘後複測`, true);
-    await sim.wait(4, token);
-    await walkHome(ctx, nurse, owner, path.slice(0, -1).reverse(), token);
+    await sim.wait(4, bg);
+    await walkHome(ctx, nurse, owner, path.slice(0, -1).reverse(), bg);
   })().catch(ignoreCancel);
 }
 
@@ -178,6 +179,8 @@ export async function delivery(ctx, r, task, token) {
   task.loading = true; // late orders for the same floor can no longer join
   await r.speak(`藥局您好，我來領 ${fid} ${who()} 的藥。`, token);
   r.focusPerson = ph;
+  // preparing the order takes a little longer some days
+  await sim.wait(3 + 12 * sim.keyed(Math.round(task.createdClock), task.floor, "prep"), token);
   ph.pose = "idle";
   const spot = shelf.loadSpot;
   await ph.walkTo(spot.path, sim, token, spot.yaw);
@@ -188,7 +191,7 @@ export async function delivery(ctx, r, task, token) {
   }
   say(ph, `${task.priority === 1 ? "緊急用藥" : `${task.items[0].title}的藥`}備好了，抽屜已上鎖。`);
   r.focusPerson = null;
-  walkHome(ctx, ph, r, spot.path.slice(0, -1).reverse(), token);
+  walkHome(ctx, ph, r, spot.path.slice(0, -1).reverse(), fleet.token);
   await sim.wait(1.2, token);
 
   fleet.step(task, `對接 ${shelf.id}`, 0.32);
@@ -208,6 +211,8 @@ export async function delivery(ctx, r, task, token) {
   const pick = hospital.staffSpots[`${fid}-pickup`];
   const lane = [-0.45, Math.min(nurse.home.z, 3.0)];
   r.focusPerson = nurse;
+  // the nurse finishes what she is doing first
+  await sim.wait(2 + 10 * sim.keyed(Math.round(task.createdClock), task.floor, "pickup"), token);
   nurse.pose = "idle";
   await nurse.walkTo([lane, [pick.x, pick.z]], sim, token, pick.yaw);
   nurse.pose = "hand";
@@ -218,7 +223,7 @@ export async function delivery(ctx, r, task, token) {
   say(nurse, task.priority === 1 ? "收到緊急用藥，謝謝！我馬上給藥。" : "收到，謝謝小幫手！");
   r.focusPerson = null;
   fleet.delivered(task, r);
-  walkHome(ctx, nurse, r, [lane], token).then(() => (nurse.pose = nurse.home.pose));
+  walkHome(ctx, nurse, r, [lane], fleet.token);
   nurse.pose = "carry";
   await sim.wait(1.2, token);
 
@@ -268,12 +273,17 @@ async function wanderingResident(ctx, r, task, cp, token) {
   task.wander = false;
   const seat = res.home;
   const lane = hospital.exitPoint.z;
+  const bg = fleet.token;
   const move = r.goTo(cp, token);
-  res.walkTo([[seat.x, 1.4], [seat.x - 0.9, lane], [hospital.exitPoint.x, lane]], sim, token, Math.PI).catch(ignoreCancel);
+  res.walkTo([[seat.x, 1.4], [seat.x - 0.9, lane], [hospital.exitPoint.x, lane]], sim, bg, Math.PI).catch(ignoreCancel);
+  // if this robot is pulled away (fault), the resident still goes back to the activity room
+  sim.wait(120, bg).then(() => {
+    if (!res.sitting && !res.walking && !carer.busy) res.walkTo([[seat.x, 1.4], [seat.x, seat.z]], sim, bg, seat.yaw).then(() => (res.sitting = true), ignoreCancel);
+  }, ignoreCancel);
   const near = sim.until(() => !res.sitting && Math.hypot(res.x - r.x, res.z - r.z) < 3.0, token);
   if ((await Promise.race([move.then(() => "arrived"), near.then(() => "near")])) === "arrived") {
     res.stop();
-    res.walkTo([[seat.x, 1.4], [seat.x, seat.z]], sim, token, seat.yaw).then(() => (res.sitting = true), ignoreCancel);
+    res.walkTo([[seat.x, 1.4], [seat.x, seat.z]], sim, bg, seat.yaw).then(() => (res.sitting = true), ignoreCancel);
     return;
   }
   await claim(ctx, carer, r, token);
@@ -300,13 +310,13 @@ async function wanderingResident(ctx, r, task, cp, token) {
   emit("log", { tag: "staff", html: "照服員 阿芳 陪同住民 陳伯伯 返回活動室" });
   (async () => {
     await Promise.all([
-      res.walkTo([[seat.x, 1.4], [seat.x, seat.z]], sim, token, seat.yaw),
-      carer.walkTo([[seat.x - 0.75, 1.45], [seat.x - 0.75, 2.1]], sim, token, 0),
+      res.walkTo([[seat.x, 1.4], [seat.x, seat.z]], sim, bg, seat.yaw),
+      carer.walkTo([[seat.x - 0.75, 1.45], [seat.x - 0.75, 2.1]], sim, bg, 0),
     ]);
     res.sitting = true;
     carer.pose = "check";
-    await sim.wait(6, token);
-    await walkHome(ctx, carer, r, [[1.6, 1.3], [-0.2, 1.3], [-0.2, 2.75]], token);
+    await sim.wait(6, bg);
+    await walkHome(ctx, carer, r, [[1.6, 1.3], [-0.2, 1.3], [-0.2, 2.75]], bg);
   })().catch(ignoreCancel);
   await sim.wait(1.2, token);
   await r.speak("謝謝阿芳，我繼續巡視。", token);

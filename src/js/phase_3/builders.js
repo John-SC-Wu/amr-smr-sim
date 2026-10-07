@@ -2,6 +2,12 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 
+// worlds nobody looks at (the strategy lab) skip building their static geometry and signs
+let geometryOn = true;
+export function setGeometry(on) {
+  geometryOn = on;
+}
+
 // --- merge static geometry per material key: one draw call per material per floor ---
 export class Batcher {
   constructor() {
@@ -9,6 +15,7 @@ export class Batcher {
   }
 
   add(key, geometry, matrix) {
+    if (!geometryOn) return;
     let g = geometry.index ? geometry.toNonIndexed() : geometry.clone();
     if (!g.attributes.uv) {
       g.setAttribute("uv", new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
@@ -95,6 +102,7 @@ export function contactShadowTexture() {
 }
 
 export function textTexture(text, { w = 256, h = 128, color = "#1d2b29", bg = null, font = `700 72px ${CANVAS_FONT}`, align = "center" } = {}) {
+  if (!geometryOn) return null;
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;

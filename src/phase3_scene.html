@@ -6,7 +6,7 @@
     <title>Kachaka 長照車隊</title>
     <meta
       name="description"
-      content="多台 Kachaka Pro 在多樓層長照機構中協作：任務佇列與可調整的派工策略、走廊靠右雙向車道與房間通行預約、電梯排隊、充電座分配與低電量交接，並以緯創 BestShape VS 量測住民生命徵象的 3D 概念模擬。"
+      content="多台 Kachaka Pro 在多樓層長照機構中協作的 3D 概念模擬：可調整的派工策略、雙向車道與房間通行預約、電梯排隊、充電與故障交接，緯創 BestShape VS 生命徵象量測；附即時平面圖、機器人時間軸、即時數據、導覽，以及在背景重跑同一個早上的策略實驗室。"
     />
     <link rel="stylesheet" href="css/hospital-styles.css" />
     <script type="importmap">
@@ -33,6 +33,14 @@
       <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></symbol>
       <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></symbol>
       <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2" /><circle cx="18" cy="6" r="2" /><path d="M8 18h7a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7" /></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5L8 5.5Z" /></symbol>
+      <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.8 18.2A1.9 1.9 0 0 0 6.5 21h11a1.9 1.9 0 0 0 1.7-2.8L14 9V3" /><path d="M7.5 15h9" /></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V4M4 20h16" /><path d="m7 15 4-4 3 3 5-6" /></symbol>
+      <symbol id="i-bars" viewBox="0 0 24 24"><path d="M4 6h9M4 12h14M4 18h6" /></symbol>
+      <symbol id="i-gantt" viewBox="0 0 24 24"><path d="M4 6h8M8 12h10M6 18h7" /></symbol>
+      <symbol id="i-next" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /></symbol>
+      <symbol id="i-prev" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6" /></symbol>
+      <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L4 16.8V20h3.2l5.3-5.3a4 4 0 0 0 5.2-5.4l-2.5 2.5-2.6-.6-.6-2.6 2.5-2.5Z" /></symbol>
     </svg>
 
     <div class="app" id="app">
@@ -45,27 +53,27 @@
       </header>
 
       <div class="ctrl">
-        <div class="clock">
-          <span class="label">模擬時間</span>
-          <b id="clock">07:58:00</b>
-        </div>
         <div class="seg speed" role="group" aria-label="模擬速度">
           <button type="button" id="speed-0" data-speed="0" aria-pressed="false" aria-label="暫停"><svg><use href="#i-pause" /></svg></button>
           <button type="button" id="speed-1" data-speed="1" aria-pressed="false">1×</button>
           <button type="button" id="speed-6" data-speed="6" aria-pressed="true">6×</button>
           <button type="button" id="speed-12" data-speed="12" aria-pressed="false">12×</button>
         </div>
-        <button type="button" class="btn-settings" id="open-settings" aria-haspopup="dialog" aria-controls="drawer">
+        <button type="button" class="btn-tour" id="open-tour" aria-pressed="false">
+          <svg><use href="#i-play" /></svg><span>導覽</span>
+        </button>
+        <button type="button" class="btn-settings" id="open-settings" aria-haspopup="dialog" aria-controls="drawer" aria-label="調度設定" title="調度設定">
           <svg><use href="#i-sliders" /></svg><span>調度設定</span>
         </button>
       </div>
 
       <section class="kpis" aria-label="今日統計（模擬資料）">
+        <div class="kpi kpi-clock"><span class="k-label">模擬時間</span><span class="k-value"><b id="clock">07:58:00</b></span></div>
         <div class="kpi"><span class="k-label">完成任務</span><span class="k-value"><b id="kpi-done">0</b><small>件</small></span></div>
         <div class="kpi"><span class="k-label">平均等候</span><span class="k-value"><b id="kpi-wait">0.0</b><small>分</small></span></div>
         <div class="kpi"><span class="k-label">今日量測</span><span class="k-value"><b id="kpi-beds">4</b><small>床</small></span></div>
         <div class="kpi" data-tone="crit"><span class="k-label">異常通報</span><span class="k-value"><b id="kpi-alerts">0</b><small>件</small></span></div>
-        <div class="kpi"><span class="k-label">電梯搭乘・排隊</span><span class="k-value"><b id="kpi-rides">0</b><small id="kpi-queue">次</small></span></div>
+        <div class="kpi"><span class="k-label">電梯搭乘</span><span class="k-value"><b id="kpi-rides">0</b><small id="kpi-queue">次</small></span></div>
         <div class="kpi" data-tone="accent"><span class="k-label">省下護理時間</span><span class="k-value"><b id="kpi-minutes">24</b><small>分・估算</small></span></div>
       </section>
 
@@ -126,33 +134,73 @@
       </aside>
 
       <div class="stage-wrap">
-        <main class="stage" id="stage">
-          <canvas id="scene" role="img" aria-label="長照機構 3D 場景：四層樓建築與外掛玻璃電梯，多台 Kachaka 機器人分工執行任務"></canvas>
-          <div class="labels" id="labels" aria-hidden="true"></div>
-          <div class="hud hud-top">
-            <div class="floor-badge" id="floor-badge">
-              <b id="hud-floor">1F</b>
-              <span><span id="hud-floor-name">服務大廳・醫務室</span><small id="hud-clock">07:58</small></span>
+        <main class="stage" id="stage" data-view="3d">
+          <div class="pane-3d" id="pane-3d">
+            <canvas id="scene" role="img" aria-label="長照機構 3D 場景：四層樓建築與外掛玻璃電梯，多台 Kachaka 機器人分工執行任務"></canvas>
+            <div class="labels" id="labels" aria-hidden="true"></div>
+            <div class="hud hud-top">
+              <div class="floor-badge" id="floor-badge">
+                <b id="hud-floor">1F</b>
+                <span><span id="hud-floor-name">服務大廳・醫務室</span><small id="hud-clock">07:58</small></span>
+              </div>
+              <div class="hud-right" id="hud-right">
+                <div class="seg cam" role="group" aria-label="視角">
+                  <button type="button" id="cam-auto" data-cam="auto" aria-pressed="true">自動<span class="cam-long">導播</span></button>
+                  <button type="button" id="cam-follow" data-cam="follow" aria-pressed="false">跟隨</button>
+                  <button type="button" id="cam-overview" data-cam="overview" aria-pressed="false">全景</button>
+                  <button type="button" id="cam-free" data-cam="free" aria-pressed="false">自由</button>
+                </div>
+              </div>
             </div>
-            <div class="seg cam" role="group" aria-label="視角">
-              <button type="button" id="cam-auto" data-cam="auto" aria-pressed="true">自動<span class="cam-long">導播</span></button>
-              <button type="button" id="cam-follow" data-cam="follow" aria-pressed="false">跟隨</button>
-              <button type="button" id="cam-overview" data-cam="overview" aria-pressed="false">全景</button>
-              <button type="button" id="cam-free" data-cam="free" aria-pressed="false">自由</button>
+            <div class="hud hud-now" id="hud-now">
+              <span class="now-ic" id="now-ic"><svg><use href="#i-battery" /></svg></span>
+              <div class="now-text">
+                <b><span class="rchip" id="now-chip">K1</span><span id="now-title">準備出發</span></b>
+                <span id="now-detail">車隊於充電座待命</span>
+              </div>
+              <div class="now-metric" id="now-metric"></div>
+              <div class="now-prog"><i id="now-prog"></i></div>
+            </div>
+            <p class="hud-hint" id="hud-hint">拖曳旋轉・滾輪或雙指縮放・點選左側機器人可跟隨</p>
+            <div class="stage-fallback" id="fallback" hidden>
+              <p>此裝置無法啟用 WebGL，3D 場景無法顯示；可切換到「平面」檢視，側欄與下方數據仍會即時更新。</p>
             </div>
           </div>
-          <div class="hud hud-now" id="hud-now">
-            <span class="now-ic" id="now-ic"><svg><use href="#i-battery" /></svg></span>
-            <div class="now-text">
-              <b><span class="rchip" id="now-chip">K1</span><span id="now-title">準備出發</span></b>
-              <span id="now-detail">車隊於充電座待命</span>
+          <section class="plan" id="plan" aria-labelledby="plan-title">
+            <header class="plan-head">
+              <h2 id="plan-title">即時平面圖</h2>
+              <ul class="plan-legend" aria-label="圖例">
+                <li><i class="lg lg-robot"></i>機器人</li>
+                <li><i class="lg lg-route"></i>規劃路線</li>
+                <li><i class="lg lg-zone"></i>通行區使用中</li>
+                <li><i class="lg lg-wait"></i>等候</li>
+                <li><i class="lg lg-alert"></i>生理異常</li>
+              </ul>
+            </header>
+            <div class="plan-body" id="plan-body" title="點機器人可跟隨，點樓層名稱可放大或還原">
+              <canvas aria-hidden="true"></canvas>
+              <div class="plan-tip" role="tooltip" hidden></div>
             </div>
-            <div class="now-metric" id="now-metric"></div>
-            <div class="now-prog"><i id="now-prog"></i></div>
+          </section>
+          <div class="seg view-seg" id="view-seg" role="group" aria-label="畫面">
+            <button type="button" data-view="3d" aria-pressed="true">3D</button>
+            <button type="button" data-view="split" aria-pressed="false" class="view-split">分割</button>
+            <button type="button" data-view="plan" aria-pressed="false">平面</button>
           </div>
-          <p class="hud-hint" id="hud-hint">拖曳旋轉・滾輪或雙指縮放・點選左側機器人可跟隨</p>
-          <div class="stage-fallback" id="fallback" hidden>
-            <p>此裝置無法啟用 WebGL，3D 場景無法顯示；側欄與下方數據仍會即時更新。</p>
+          <div class="tour-card" id="tour-card" role="region" aria-label="導覽說明" aria-live="polite" hidden>
+            <div class="tour-top">
+              <span class="tour-step" id="tour-step">1 / 9</span>
+              <b id="tour-title">車隊待命</b>
+              <span class="tour-clock" id="tour-clock"></span>
+            </div>
+            <p id="tour-text"></p>
+            <div class="tour-ctrl">
+              <ol class="tour-dots" id="tour-dots" aria-hidden="true"></ol>
+              <button type="button" class="icon-btn" id="tour-prev" aria-label="上一章"><svg><use href="#i-prev" /></svg></button>
+              <button type="button" class="tour-next" id="tour-next"><span>下一章</span><svg><use href="#i-next" /></svg></button>
+              <button type="button" class="icon-btn" id="tour-close" aria-label="結束導覽"><svg><use href="#i-close" /></svg></button>
+            </div>
+            <div class="tour-prog"><i id="tour-prog"></i></div>
           </div>
         </main>
       </div>
@@ -205,20 +253,32 @@
         </div>
       </aside>
 
-      <section class="panel p-tasks" aria-labelledby="tasks-title">
+      <section class="panel p-tasks" aria-label="任務與即時數據">
         <div class="panel-head tasks-head">
-          <h2 id="tasks-title"><svg><use href="#i-route" /></svg>任務佇列與派工</h2>
+          <div class="seg btabs" role="tablist" aria-label="下方面板">
+            <button type="button" role="tab" id="bt-board" data-btab="board" aria-selected="true" aria-pressed="true" aria-controls="bp-board"><svg><use href="#i-route" /></svg>任務佇列</button>
+            <button type="button" role="tab" id="bt-timeline" data-btab="timeline" aria-selected="false" aria-pressed="false" aria-controls="bp-timeline"><svg><use href="#i-gantt" /></svg>時間軸</button>
+            <button type="button" role="tab" id="bt-charts" data-btab="charts" aria-selected="false" aria-pressed="false" aria-controls="bp-charts"><svg><use href="#i-chart" /></svg>即時數據</button>
+          </div>
+          <button type="button" class="btn-lab" id="open-lab" aria-haspopup="dialog" aria-controls="lab"><svg><use href="#i-flask" /></svg>策略實驗室</button>
           <button type="button" class="pill pill-btn" id="strategy-pill" aria-controls="drawer" title="開啟調度設定">綜合評分</button>
           <div class="add-row" role="group" aria-label="新增任務（示範用）">
             <button type="button" data-add="delivery">＋配送</button>
             <button type="button" data-add="stat" data-tone="crit">＋緊急配送</button>
             <button type="button" data-add="rounds">＋巡房</button>
             <button type="button" data-add="patrol">＋巡視</button>
-            <button type="button" data-add="peak" title="同時新增 3 筆不同樓層的配送">電梯尖峰</button>
-            <button type="button" data-add="battery" title="把一台工作中的機器人電量降到強制回充門檻以下">低電量交接</button>
+            <details class="demo-menu" id="demo-menu">
+              <summary>情境示範</summary>
+              <div class="demo-list">
+                <button type="button" data-add="peak">電梯尖峰<small>同時新增 3 筆不同樓層的配送</small></button>
+                <button type="button" data-add="battery">低電量交接<small>工作中的機器人降到強制回充門檻以下</small></button>
+                <button type="button" data-add="fault" data-tone="crit">機器人故障<small>下一台行進中的機器人停下，20 秒後改派</small></button>
+                <button type="button" data-add="outage" data-tone="crit">電梯停用<small>維護 4 分鐘，跨樓層任務暫停</small></button>
+              </div>
+            </details>
           </div>
         </div>
-        <div class="kanban">
+        <div class="kanban" id="bp-board" role="tabpanel" aria-labelledby="bt-board">
           <section class="col" data-col="queue" aria-labelledby="col-queue-h">
             <h3 id="col-queue-h">佇列<b id="n-queue">0</b></h3>
             <ol id="col-queue"></ol>
@@ -231,6 +291,30 @@
             <h3 id="col-done-h">已完成<b id="n-done">0</b></h3>
             <ol id="col-done"></ol>
           </section>
+        </div>
+        <div class="tl" id="bp-timeline" role="tabpanel" aria-labelledby="bt-timeline" hidden>
+          <div class="tl-head">
+            <ul class="legend" aria-label="圖例"></ul>
+            <div class="seg tl-range" role="group" aria-label="時間範圍">
+              <button type="button" data-range="30" aria-pressed="true">近 30 分</button>
+              <button type="button" data-range="all" aria-pressed="false">全部</button>
+            </div>
+          </div>
+          <div class="tl-body"></div>
+        </div>
+        <div class="charts" id="bp-charts" role="tabpanel" aria-labelledby="bt-charts" hidden>
+          <figure class="chart" id="ch-battery">
+            <figcaption><b>電量</b><span>%・虛線為充電門檻</span><ul class="legend" id="battery-legend"></ul></figcaption>
+            <div class="ch-body"></div>
+          </figure>
+          <figure class="chart" id="ch-queue">
+            <figcaption><b>佇列與電梯</b><span>陰影＝電梯停用</span></figcaption>
+            <div class="ch-body"></div>
+          </figure>
+          <figure class="chart" id="ch-alloc">
+            <figcaption><b>時間分配</b><span>開始至今</span><ul class="legend" id="alloc-legend"></ul></figcaption>
+            <div class="ch-body"></div>
+          </figure>
         </div>
       </section>
 
@@ -254,6 +338,29 @@
         <span>本頁為概念模擬，住民、數據與機構皆為虛構，與 Preferred Robotics、緯創醫學、西格瑪機器人無官方關聯。</span>
       </footer>
     </div>
+
+    <div class="lab-backdrop" id="lab-backdrop" hidden></div>
+    <section class="lab" id="lab" role="dialog" aria-modal="true" aria-labelledby="lab-title" hidden>
+      <header class="lab-head">
+        <div class="lab-title">
+          <h2 id="lab-title"><svg><use href="#i-flask" /></svg>策略實驗室</h2>
+          <p>同一個早上（07:58–09:00）在背景完整模擬多次，只換一個條件，比較結果。<span id="lab-source"></span></p>
+          <ol class="lab-events" id="lab-events" aria-label="腳本事件"></ol>
+        </div>
+        <div class="lab-actions">
+          <button type="button" class="btn-ghost" id="lab-table" aria-pressed="false"><svg><use href="#i-bars" /></svg>表格</button>
+          <button type="button" class="btn-ghost" id="lab-run-quick" title="以目前調度設定，1 個情境（約 15 秒）">以目前設定快速重跑</button>
+          <button type="button" class="btn-primary" id="lab-run-full" title="以目前調度設定，3 個情境平均（約 45 秒）">完整重跑</button>
+          <button type="button" class="icon-btn" id="lab-close" aria-label="關閉策略實驗室"><svg><use href="#i-close" /></svg></button>
+        </div>
+        <div class="lab-progress" id="lab-progress" hidden>
+          <div class="bar"><i id="lab-progress-bar"></i></div>
+          <span id="lab-progress-label">準備中…</span>
+          <button type="button" class="btn-ghost" id="lab-cancel">取消</button>
+        </div>
+      </header>
+      <div class="lab-body" id="lab-body"></div>
+    </section>
 
     <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
     <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>

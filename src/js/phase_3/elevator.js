@@ -19,6 +19,7 @@ export class Elevator {
     this.calls = FLOORS.map(() => false);
     this.trips = 0;
     this.occupied = false;
+    this.outage = false;
     this.#build();
     this.#updateIndicator(true);
   }
@@ -169,18 +170,18 @@ export class Elevator {
   }
 
   #updateIndicator(force = false) {
-    const key = `${this.floor}:${this.direction}`;
+    const key = `${this.floor}:${this.direction}:${this.outage}`;
     if (!force && key === this.indicatorKey) return;
     this.indicatorKey = key;
     const g = this.indicatorCanvas.getContext("2d");
     g.fillStyle = "#0e1716";
     g.fillRect(0, 0, 192, 72);
-    g.fillStyle = "#ffb547";
+    g.fillStyle = this.outage ? "#ff6b63" : "#ffb547";
     g.font = "700 48px 'Barlow Semi Condensed', sans-serif";
     g.textAlign = "center";
     g.textBaseline = "middle";
     const arrow = this.direction > 0 ? "▲" : this.direction < 0 ? "▼" : "";
-    g.fillText(`${FLOORS[this.floor].id} ${arrow}`, 96, 39);
+    g.fillText(this.outage ? "STOP" : `${FLOORS[this.floor].id} ${arrow}`, 96, 39);
     this.indicatorTex.needsUpdate = true;
   }
 

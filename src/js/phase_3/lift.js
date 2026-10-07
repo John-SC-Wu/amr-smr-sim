@@ -20,7 +20,12 @@ export class LiftScheduler {
     this.current = null;
     this.seq = 0;
     this.version = 0;
+    this.outageUntil = -1;
     this.stats = { rides: 0, waitSum: 0 };
+  }
+
+  get outOfService() {
+    return this.sim.time < this.outageUntil;
   }
 
   request(robot, from, to) {
@@ -151,6 +156,15 @@ export class LiftScheduler {
   async run(token) {
     const { sim, el } = this;
     for (;;) {
+      if (this.outOfService) {
+        // the ride in progress always finishes; new calls wait for service to resume
+        el.outage = true;
+        if (el.anyDoorOpen()) await el.closeDoors(el.floor, sim, token);
+        await sim.until(() => !this.outOfService, token);
+        el.outage = false;
+        this.bump();
+        continue;
+      }
       const ready = this.tickets.filter((t) => t.ready && !t.cancelled);
       if (!ready.length) {
         if (el.anyDoorOpen()) {
@@ -213,6 +227,8 @@ export class LiftScheduler {
     this.tickets = [];
     this.current = null;
     this.version++;
+    this.outageUntil = -1;
+    this.el.outage = false;
     this.stats = { rides: 0, waitSum: 0 };
   }
 }

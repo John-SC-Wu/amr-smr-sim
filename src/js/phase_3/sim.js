@@ -12,16 +12,43 @@ export function ignoreCancel(err) {
   if (!(err instanceof CancelError)) console.error(err);
 }
 
+// a child token is cancelled with its parent (fleet reset) or on its own (one task aborted)
 export class Token {
-  constructor() {
-    this.cancelled = false;
+  constructor(parent = null) {
+    this.parent = parent;
+    this.own = false;
+  }
+  get cancelled() {
+    return this.own || (this.parent !== null && this.parent.cancelled);
   }
   cancel() {
-    this.cancelled = true;
+    this.own = true;
   }
   check() {
     if (this.cancelled) throw new CancelError();
   }
+}
+
+// small seeded PRNG (mulberry32): the same seed replays the same day
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hashKey(seed, parts) {
+  let h = (2166136261 ^ seed) >>> 0;
+  const text = parts.join("|");
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h;
 }
 
 // --- simulation clock + awaitable waits driven by sim time ---
@@ -32,6 +59,25 @@ export class Sim {
     this.speed = DEFAULT_SPEED;
     this.paused = false;
     this.waiters = [];
+    this.reseed(1);
+  }
+
+  reseed(seed) {
+    this.seed = seed;
+    this.rand = mulberry32(seed);
+    this.streams = new Map();
+  }
+
+  // draws tied to what they decide (not to the order things happen in): two runs of the same
+  // scenario see the same day even when their robots are dispatched differently
+  keyed(...parts) {
+    return mulberry32(hashKey(this.seed, parts))();
+  }
+
+  next(stream) {
+    let r = this.streams.get(stream);
+    if (!r) this.streams.set(stream, (r = mulberry32(hashKey(this.seed, [stream]))));
+    return r();
   }
 
   get clock() {
@@ -89,7 +135,14 @@ export function formatClock(seconds, withSeconds = true) {
 // --- tiny event bus shared by the scene and the dashboard ---
 export const bus = new EventTarget();
 
+let muted = false;
+// batch experiments run a second, invisible world; its events must not reach the page
+export function muteEvents(on) {
+  muted = on;
+}
+
 export function emit(type, detail = {}) {
+  if (muted) return;
   bus.dispatchEvent(new CustomEvent(type, { detail }));
 }
 

@@ -59,6 +59,28 @@ export class Traffic {
     return true;
   }
 
+  // would the robot get the zone right now? (does not join the queue)
+  canTake(id, robot) {
+    const z = this.zones.get(id);
+    if (!z) return true;
+    if (z.holder && z.holder !== robot) return false;
+    const next = this.#next(z);
+    return !next || next.robot === robot;
+  }
+
+  // the holder steps back for a robot already waiting at the door; it is served right after
+  handOver(id, from, to) {
+    const z = this.zones.get(id);
+    if (!z || z.holder !== from) return false;
+    const i = z.queue.findIndex((q) => q.robot === to);
+    if (i >= 0) z.queue.splice(i, 1);
+    const first = z.queue.reduce((m, q) => Math.min(m, q.t), this.sim.time);
+    z.queue.push({ robot: from, t: first - 1 });
+    z.holder = to;
+    z.since = this.sim.time;
+    return true;
+  }
+
   // blocking variant for robots standing still (e.g. parked on a charger inside the zone)
   acquire(id, robot, token) {
     return this.sim.until(() => this.tryAcquire(id, robot), token);

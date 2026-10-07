@@ -5,6 +5,9 @@ import { fwd } from "./sim.js";
 
 const UTILITY_DOOR = -5.4; // front-left utility room door, offset from room 1's door so crossings never meet head-on
 
+// the four rooms behind the corridor (zone outline on the 2D plan)
+const backRoom = (floor, r) => ({ floor, x1: ROOM_CENTERS[r] - 2.25, x2: ROOM_CENTERS[r] + 2.25, z1: PLATE.minZ, z2: CORRIDOR.minZ });
+
 // --- per-floor material set (each floor fades independently in the cut-away view) ---
 function floorMaterials(def) {
   const accent = new THREE.Color(def.accent);
@@ -47,6 +50,7 @@ export class Hospital {
     this.docks = []; // chargers + parking spots
     this.carts = {}; // floor index -> vital-sign cart home
     this.medHomes = [];
+    this.zoneRects = new Map(); // zone id -> floor-plan rectangle (2D plan view)
     FLOORS.forEach((def, i) => this.floors.push(this.#buildFloor(i, def)));
   }
 
@@ -79,6 +83,7 @@ export class Hospital {
       group: new THREE.Group(),
       batch: new Batcher(),
       walls: [], // 2D segments for the LiDAR
+      plan: { walls: [], obstacles: [], labels: [] }, // the same floor drawn as a 2D plan
       materials: Object.values(mats),
       mats,
       fade: 1,
@@ -104,6 +109,7 @@ export class Hospital {
     f.batch.add(key, geo.box(), place(cx, h / 2, cz, rot, len + WALL_T, h, WALL_T));
     f.batch.add("cap", geo.box(), place(cx, h + 0.012, cz, rot, len + WALL_T + 0.004, 0.024, WALL_T + 0.006));
     f.walls.push([x1, z1, x2, z2]);
+    f.plan.walls.push([x1, z1, x2, z2]);
   }
 
   // wall along x (fixed z) or z (fixed x) with door gaps [[center, width], ...]
@@ -125,6 +131,7 @@ export class Hospital {
   // obstacle rectangle for the LiDAR (axis aligned, in floor coordinates)
   #obstacle(f, x1, x2, z1, z2) {
     f.walls.push([x1, z1, x2, z1], [x2, z1, x2, z2], [x2, z2, x1, z2], [x1, z2, x1, z1]);
+    f.plan.obstacles.push([x1, x2, z1, z2]);
   }
 
   #shadow(f, x, z, w, d, rot = 0) {
@@ -177,6 +184,7 @@ export class Hospital {
 
   // room number painted on the corridor floor in front of each door
   #floorDecal(f, text, x, z, w = 0.9) {
+    f.plan.labels.push({ text, x, z });
     const mat = new THREE.MeshBasicMaterial({
       map: textTexture(text, { color: "#24423d", w: 256, h: 112 }),
       transparent: true,
@@ -196,8 +204,9 @@ export class Hospital {
     return loc;
   }
 
-  #zone(id, name) {
+  #zone(id, name, rect = null) {
     this.zones.set(id, name);
+    if (rect) this.zoneRects.set(id, rect);
     return id;
   }
 
@@ -380,7 +389,7 @@ export class Hospital {
     this.staffSpots[`${f.id}-staffA`] = { floor: f.index, x: -2.6, z: 2.8, yaw: Math.PI / 2 };
     this.staffSpots[`${f.id}-staffB`] = { floor: f.index, x: -1.2, z: 3.35, yaw: -Math.PI / 2 };
     this.staffSpots[`${f.id}-pickup`] = { floor: f.index, x: -0.2, z: 2.05, yaw: Math.PI / 2 };
-    const zone = this.#zone(`${f.id}-ST`, `${f.id} ${label}取件點`);
+    const zone = this.#zone(`${f.id}-ST`, `${f.id} ${label}取件點`, { floor: f.index, x1: -0.62, x2: 0.22, z1: CORRIDOR.maxZ, z2: 2.12 });
     this.#loc(f, "station", `${f.id} ${label}`, -0.2, 1.3, -Math.PI / 2, [], zone);
   }
 
@@ -390,7 +399,7 @@ export class Hospital {
     const residents = RESIDENTS[f.id] || {};
     ROOM_CENTERS.forEach((cx, r) => {
       const room = `${n}0${r + 1}`;
-      const zone = this.#zone(`${f.id}-R${r}`, `${f.id} ${room} 房`);
+      const zone = this.#zone(`${f.id}-R${r}`, `${f.id} ${room} 房`, backRoom(f.index, r));
       this.#floorDecal(f, room, cx, -0.55, 0.8);
       this.#headwall(f, cx);
       if (wheelchairs.includes(r)) this.#wheelchair(f, cx + 1.95, -2.35, Math.PI);
@@ -425,7 +434,7 @@ export class Hospital {
     this.#wall(f, -4.5, CORRIDOR.maxZ, -4.5, PLATE.maxZ);
     this.#rack(f, -8.0, 4.55, 1.3, 0.5, 1.5, 0, 4, ["sheet", "boxA"]);
     this.#floorDecal(f, label, D - 1.35, 1.6, 0.9);
-    const zone = this.#zone(`${f.id}-U`, `${f.id} ${label}`);
+    const zone = this.#zone(`${f.id}-U`, `${f.id} ${label}`, { floor: f.index, x1: PLATE.minX, x2: -4.5, z1: CORRIDOR.maxZ, z2: PLATE.maxZ });
     if (!equipped) return;
     const via = [[D, CORRIDOR.maxZ], [D, 1.85]];
     this.#dock(f, f.index === 2 ? "C3" : "C4", `${f.id} 充電座`, -5.2, 4.45, Math.PI / 2, [...via, [-5.2, 3.0]], zone, true);
@@ -449,7 +458,7 @@ export class Hospital {
     this.#monitor(f, -7.25, 0.95, -3.2, Math.PI / 2);
     this.staffSpots.pharmacist = { floor: 0, x: -7.25, z: -3.85, yaw: -Math.PI / 2 };
     // three medicine cabinets along the east wall; one is normally kept free for P1 orders
-    const pharmacy = this.#zone("1F-R0", "1F 藥局");
+    const pharmacy = this.#zone("1F-R0", "1F 藥局", backRoom(0, 0));
     const door = [[c1, CORRIDOR.minZ], [c1, -1.6]];
     const toCounter = [[-7.25, -3.85], [-6.35, -3.85]];
     this.medHomes = [
@@ -470,9 +479,9 @@ export class Hospital {
       },
     ];
     // robot station: two chargers along the back wall
-    this.#zone("1F-R1", "1F 機器人站");
-    this.#zone("1F-R2", "1F 醫務室");
-    this.#zone("1F-R3", "1F 復健室");
+    this.#zone("1F-R1", "1F 機器人站", backRoom(0, 1));
+    this.#zone("1F-R2", "1F 醫務室", backRoom(0, 2));
+    this.#zone("1F-R3", "1F 復健室", backRoom(0, 3));
     addBox(b, "accentSoft", -4.3, -0.2, 0.012, 0.0135, -4.98, -2.7);
     const station = [[c2, CORRIDOR.minZ], [c2, -2.4]];
     this.#dock(f, "C1", "1F 充電座 C1", -3.2, -4.45, -Math.PI / 2, [...station, [-3.2, -3.1]], "1F-R1", true);

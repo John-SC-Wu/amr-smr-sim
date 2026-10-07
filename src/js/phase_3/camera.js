@@ -9,7 +9,7 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matc
 function interest(r) {
   if (r.focusPerson) return 92;
   const k = r.activity.kind;
-  if (k === "alert") return 100;
+  if (k === "alert" || k === "fault") return 100;
   if (k === "handoff") return 72;
   if (k === "measure") return 66;
   if (r.inElevator) return 58;

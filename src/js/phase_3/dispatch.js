@@ -96,15 +96,16 @@ export function chooseRobot({ lift, robots, settings, rrLast }, task, candidates
     const energy = taskEnergy(task, S, eta);
     const feasible = r.battery - energy >= S.criticalBattery + 5;
     const rides = r.floor !== task.start.floor || r.inElevator ? 1 : 0;
+    const stranded = rides > 0 && lift.outOfService;
     const parts = {
       travel: eta * S.wTravel,
       battery: (100 - r.battery) * 1.5 * S.wBattery,
       floor: rides * (40 + 25 * lift.queueLength()) * S.wFloor,
     };
-    return { robot: r, eta, energy, feasible, rides, parts, cost: parts.travel + parts.battery + parts.floor };
+    return { robot: r, eta, energy, feasible: feasible && !stranded, stranded, rides, parts, cost: parts.travel + parts.battery + parts.floor };
   });
   const ok = rows.filter((x) => x.feasible);
-  const lacking = rows.filter((x) => !x.feasible).map((x) => `${x.robot.id} 電量不足以完成`);
+  const lacking = rows.filter((x) => !x.feasible).map((x) => (x.stranded ? `${x.robot.id} 在其他樓層（電梯停用）` : `${x.robot.id} 電量不足以完成`));
   const tail = (list) => (list.length ? ` · ${list.join(" · ")}` : "");
   if (!ok.length) return { robot: null, rows, text: lacking.join(" · ") || "無可用機器人" };
 

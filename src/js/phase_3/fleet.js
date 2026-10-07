@@ -3,6 +3,7 @@ import { Token, CancelError, emit, ignoreCancel, formatClock } from "./sim.js";
 import { Kachaka } from "./kachaka.js";
 import { chooseRobot, travelSeconds, robotPose } from "./dispatch.js";
 import { EXECUTORS, TASK_TYPES } from "./tasks.js";
+import { Metrics } from "./metrics.js";
 
 // starting dock per fleet size; floor chargers put robots next to the care floors' work
 const HOMES = {
@@ -59,13 +60,18 @@ export class Fleet {
       carts: world.carts,
       sensors: world.sensors,
     };
+    this.metrics = new Metrics(this);
   }
 
   // ------------------------------------------------------------ lifecycle
-  start() {
+  // seed: the same number replays the same day; script: extra timed events [{ at: clockSec, run(fleet) }]
+  start({ seed = this.settings.seed, script = [] } = {}) {
     const token = (this.token = new Token());
+    this.sim.reseed(seed);
+    this.script = script.map((s) => ({ ...s, done: false }));
     this.seq = 0;
     this.rrLast = null;
+    this.faultArmed = false;
     this.patrolCount = 0;
     this.deliveryTurn = 0;
     this.roundTurn = { 2: 0, 3: 0 };
@@ -84,19 +90,24 @@ export class Fleet {
       preemptions: 0,
       handovers: 0,
       merged: 0,
+      faults: 0,
     };
     this.#spawn(this.settings.robots);
+    this.metrics.reset();
     this.#initSchedule();
     this.lift.run(token).catch(ignoreCancel);
     for (const r of this.robots) this.#robotLoop(r, token);
-    this.#loop(token, 1, () => this.dispatch());
+    this.#loop(token, 1, () => {
+      this.dispatch();
+      this.metrics.tick();
+    });
     this.#loop(token, 2, () => this.#schedule());
     emit("log", { tag: "api", html: `已連線 ${this.robots.length} 台 Kachaka（gRPC :26400）・電梯系統・護理資訊系統 MQTT` });
     emit("fleet", { kind: "start" });
     this.#bump();
   }
 
-  async restart() {
+  async restart(opts = {}) {
     if (this.restarting) return;
     this.restarting = true;
     this.token.cancel();
@@ -126,7 +137,7 @@ export class Fleet {
     }
     w.labels.clearBubbles();
     this.sim.setClock(START_CLOCK);
-    this.start();
+    this.start(opts);
     emit("log", { tag: "sep", html: `重新開始：${this.robots.length} 台機器人` });
     this.restarting = false;
   }
@@ -191,6 +202,11 @@ export class Fleet {
       this.tasks = this.tasks.filter((x) => !drop.has(x));
     }
     emit("log", { tag: "dispatch", html: `新任務 <b>${t.id}</b>「${t.title}」P${t.priority}${t.by ? `・${t.by}` : ""}` });
+    this.metrics.taskCreated(t);
+    if (t.priority === 1) {
+      t.urgent = true;
+      this.metrics.event("p1", null, `${t.id} ${t.title}`);
+    }
     this.#bump();
     if (!this.restarting) this.dispatch();
     return t;
@@ -232,7 +248,7 @@ export class Fleet {
     const fid = FLOORS[floor].id;
     if (!items) {
       const beds = [...this.w.patients.values()].filter((p) => p.floor === floor);
-      const p = beds[Math.floor(Math.random() * beds.length)];
+      const p = beds[Math.floor(this.sim.next("orders") * beds.length)];
       items = [{ bed: p.bed.id, title: p.data.title }];
     }
     const med = this.w.meds[0].home;
@@ -267,7 +283,7 @@ export class Fleet {
   // console + UI shortcuts for presenters
   quickAdd(kind) {
     if (kind === "delivery") return this.addDelivery({ floor: [3, 1, 2][this.deliveryTurn++ % 3], by: "手動新增" });
-    if (kind === "stat") return this.addDelivery({ floor: Math.random() < 0.5 ? 2 : 3, priority: 1, by: "手動新增・緊急" });
+    if (kind === "stat") return this.addDelivery({ floor: this.sim.rand() < 0.5 ? 2 : 3, priority: 1, by: "手動新增・緊急" });
     if (kind === "patrol") return this.addPatrol();
     if (kind === "rounds") return this.addRounds(this.roundTurn[2] <= this.roundTurn[3] ? 2 : 3);
     if (kind === "peak") {
@@ -275,7 +291,107 @@ export class Fleet {
       return null;
     }
     if (kind === "battery") return this.drainDemo();
+    if (kind === "fault") return this.injectFault();
+    if (kind === "outage") return this.elevatorOutage();
     return null;
+  }
+
+  // ------------------------------------------------------------ exceptions
+  // a robot stops on its route (obstacle / bumper / lost localisation) and waits for staff
+  #faultCandidate(handoverOnly = false) {
+    const staff = Object.values(this.w.staff);
+    const ok = this.robots.filter(
+      (r) =>
+        !r.fault &&
+        r.mode === "path" &&
+        !r.ticket &&
+        !r.inElevator &&
+        (r.activity.kind === "move" || r.activity.kind === "patrol") &&
+        !staff.some((p) => p.busy === r),
+    );
+    // prefer a robot whose job can be handed over (no furniture on board): that is the case worth showing
+    const rank = (r) => (r.task ? (r.shelf ? 1 : 2) : 0);
+    ok.sort((a, b) => rank(b) - rank(a) || a.index - b.index);
+    if (handoverOnly && ok[0] && rank(ok[0]) < 2) return null;
+    return ok[0] || null;
+  }
+
+  // with no robot on the move right now, the fault is armed for the next one that is
+  injectFault(target = null, seconds = 150) {
+    const r = target || this.#faultCandidate(true);
+    if (r) return this.#fault(r, seconds);
+    if (this.faultArmed) return null;
+    this.faultArmed = true;
+    emit("log", { tag: "alert", html: "已排定故障示範：下一台行進中的機器人將回報故障" });
+    const token = this.token;
+    const armedAt = this.sim.time;
+    // wait (up to 2 min) for a robot whose job can be handed over, then take any moving robot
+    const pick = () => this.#faultCandidate(this.sim.time - armedAt < 120);
+    this.sim.until(pick, token).then(() => {
+      this.faultArmed = false;
+      const c = pick() || this.#faultCandidate();
+      if (c) this.#fault(c, seconds);
+    }, ignoreCancel);
+    return null;
+  }
+
+  #fault(r, seconds) {
+    r.fault = { since: this.sim.time, until: this.sim.time + seconds, prev: r.activity };
+    r.hold = true;
+    r.setFault(true);
+    r.setActivity("fault", "故障・待人員協助", "前方障礙卡住（模擬）");
+    this.kpi.faults++;
+    this.metrics.event("fault", r, `${r.id} 故障停止`);
+    emit("log", { tag: "alert", robot: r, html: `${r.id} 回報故障（前方障礙卡住，模擬）→ 通知 ${FLOORS[r.floor].id} 人員協助，暫停派工給 ${r.id}` });
+    // after a short diagnosis window its work goes back to the fleet
+    this.sim.wait(20, this.token).then(() => this.#faultHandover(r), ignoreCancel);
+    this.sim.wait(seconds, this.token).then(() => this.#faultRecover(r), ignoreCancel);
+    this.emitFault = r;
+    this.#bump();
+    emit("fault", { robot: r });
+    return r;
+  }
+
+  #faultHandover(r) {
+    if (!r.fault || !r.task) return;
+    const t = r.task;
+    if (r.shelf) {
+      t.note = `${r.id} 故障，${r.shelf.id} 在車上，人員協助後由 ${r.id} 繼續`;
+      emit("log", { tag: "dispatch", robot: r, html: `${t.id} 無法改派：${r.shelf.name} 在 ${r.id} 上，等待人員協助後繼續` });
+      this.#bump();
+      return;
+    }
+    if (r.taskToken) r.taskToken.cancel();
+  }
+
+  #faultRecover(r) {
+    if (!r.fault) return;
+    const prev = r.fault.prev;
+    r.fault = null;
+    r.hold = false;
+    r.setFault(false);
+    if (r.task) r.task.note = "";
+    if (r.task) r.setActivity(prev.kind, prev.label, prev.detail);
+    else r.setActivity("idle", "已復歸", "回到可派工狀態");
+    this.metrics.event("recover", r, `${r.id} 復歸`);
+    emit("log", { tag: "staff", robot: r, html: `${FLOORS[r.floor].id} 人員排除障礙，${r.id} 恢復運作` });
+    this.#bump();
+  }
+
+  // the elevator goes into maintenance: the ride in progress finishes, new calls wait
+  elevatorOutage(seconds = 240) {
+    if (this.lift.outOfService) return null;
+    this.lift.outageUntil = this.sim.time + seconds;
+    this.lift.bump();
+    this.metrics.event("outage", null, `電梯停用 ${Math.round(seconds / 60)} 分鐘`);
+    emit("log", { tag: "alert", html: `電梯系統回報：維護停用 ${Math.round(seconds / 60)} 分鐘 → 跨樓層任務暫停，同樓層任務照常` });
+    this.sim.wait(seconds, this.token).then(() => {
+      this.metrics.event("outage-end", null, "電梯恢復");
+      emit("log", { tag: "lift", html: "電梯恢復服務，依排程策略消化等候中的機器人" });
+      this.lift.bump();
+    }, ignoreCancel);
+    this.#bump();
+    return true;
   }
 
   // demo: drop a working robot below the critical threshold to show the hand-over
@@ -293,13 +409,23 @@ export class Fleet {
   #refreshVitals(beds, turn) {
     for (const id of beds) {
       const p = this.w.patients.get(id);
-      p.hr = p.data.hr + Math.round(Math.random() * 6 - 3);
-      p.rr = p.data.rr + Math.round(Math.random() * 2 - 1);
+      p.hr = p.data.hr + Math.round(this.sim.keyed(id, turn, "hr") * 6 - 3);
+      p.rr = p.data.rr + Math.round(this.sim.keyed(id, turn, "rr") * 2 - 1);
     }
     const odd = turn % 2 === 1;
     const set = (id, v) => beds.includes(id) && Object.assign(this.w.patients.get(id), v);
     set("302-B", odd ? { hr: 98, rr: 27 } : { hr: 92, rr: 22 });
     set("402-A", odd ? { hr: 113, rr: 22 } : { hr: 106, rr: 20 });
+    // later rounds: now and then another resident reads high (varies with the scenario seed)
+    if (turn > 1) {
+      for (const id of beds) {
+        if (id === "302-B" || id === "402-A" || this.sim.keyed(id, turn, "high") > 0.08) continue;
+        const p = this.w.patients.get(id);
+        const v = this.sim.keyed(id, turn, "value");
+        if (this.sim.keyed(id, turn, "sign") < 0.5) p.hr = 111 + Math.round(v * 7);
+        else p.rr = 25 + Math.round(v * 3);
+      }
+    }
   }
 
   #initSchedule() {
@@ -316,9 +442,16 @@ export class Fleet {
         once: true,
         run: () => this.addDelivery({ floor: 3, items: [{ bed: "403-B", title: "楊奶奶" }], by: "4F 護理站派單" }),
       },
-      { next: at(8, 3) + this.settings.deliveryEvery * 60, every: () => this.settings.deliveryEvery, run: () => this.quickAdd("delivery") },
-      { next: at(8, 12), every: () => this.settings.patrolEvery, run: () => this.#scheduled("patrol", 1) },
+      // ward orders arrive irregularly around the configured interval; the seed decides the day
+      { key: "delivery", next: at(8, 3) + this.settings.deliveryEvery * 60, every: () => this.settings.deliveryEvery, jitter: 0.45, run: () => this.addDelivery({ floor: this.#orderFloor(), by: "護理站派單" }) },
+      { key: "patrol", next: at(8, 12), every: () => this.settings.patrolEvery, jitter: 0.2, run: () => this.#scheduled("patrol", 1) },
     ];
+  }
+
+  // care floors order more than the dementia unit
+  #orderFloor() {
+    const x = this.sim.next("orders");
+    return x < 0.2 ? 1 : x < 0.6 ? 2 : 3;
   }
 
   // a periodic job whose previous run has not even started yet is not queued twice
@@ -333,6 +466,11 @@ export class Fleet {
 
   #schedule() {
     const now = this.sim.clock;
+    for (const s of this.script) {
+      if (s.done || now < s.at) continue;
+      s.done = true;
+      s.run(this);
+    }
     for (const s of this.plan) {
       if (s.done || now < s.next) continue;
       if (s.once) {
@@ -342,7 +480,8 @@ export class Fleet {
       }
       const every = s.every();
       if (every > 0) s.run();
-      s.next += Math.max(5, every || 30) * 60;
+      const spread = s.jitter ? 1 - s.jitter + 2 * s.jitter * this.sim.next(`plan-${s.key}`) : 1;
+      s.next += Math.max(5, every || 30) * 60 * spread;
     }
   }
 
@@ -356,7 +495,7 @@ export class Fleet {
 
   available(r) {
     const S = this.settings;
-    return !r.task && !r.assignment && !r.preemptFor && !r.needCharge && !r.vacate && r.battery >= S.minDispatch;
+    return !r.fault && !r.task && !r.assignment && !r.preemptFor && !r.needCharge && !r.vacate && r.battery >= S.minDispatch;
   }
 
   #dctx() {
@@ -382,6 +521,8 @@ export class Fleet {
       .filter((t) => t.state === "queued")
       .sort((a, b) => this.effPriority(a) - this.effPriority(b) || a.createdAt - b.createdAt);
     for (const task of queue) {
+      // an earlier pick in this pass may already have merged or taken this one
+      if (task.state !== "queued") continue;
       task.block = "";
       if (S.batching && this.#tryBatch(task)) continue;
       const res = this.#resources(task);
@@ -446,12 +587,28 @@ export class Fleet {
     r.assignment = task;
     this.rrLast = r;
     emit("log", { tag: "dispatch", robot: r, html: `派工 <b>${task.id}</b>「${task.title}」→ <b>${r.id}</b>：${text}` });
-    if (task.type === "delivery" && this.settings.batching) {
-      for (const other of this.tasks) {
-        if (other !== task && other.state === "queued" && other.type === "delivery" && other.floor === task.floor) this.#mergeDelivery(other, task);
+    this.#absorb(task);
+    this.#bump();
+  }
+
+  // a delivery that just got its robot takes along the other orders for the same floor,
+  // including an urgent one still waiting for another robot to reach a safe point
+  #absorb(host) {
+    if (host.type !== "delivery" || !this.settings.batching) return;
+    for (const other of this.tasks) {
+      if (other === host || other.type !== "delivery" || other.floor !== host.floor) continue;
+      if (other.state === "queued") this.#mergeDelivery(other, host);
+      else if (other.state === "assigned" && other.preempting && other.robot && other.robot.preemptFor === other) {
+        if (host.items.length >= 3 || host.loading) continue;
+        const victim = other.robot;
+        victim.preemptFor = null;
+        other.preempting = false;
+        if (other.shelf && other.shelf.reservedBy === other) other.shelf.reservedBy = null;
+        other.shelf = null;
+        this.#mergeDelivery(other, host);
+        emit("log", { tag: "dispatch", robot: victim, html: `${victim.id} 不必中斷：<b>${other.id}</b> 併入 ${host.id} 同一趟` });
       }
     }
-    this.#bump();
   }
 
   // re-measures ride along with a round on the same floor; same-floor deliveries share a trip
@@ -504,6 +661,7 @@ export class Fleet {
     task.robot = host.robot;
     host.merged.push(task);
     this.kpi.merged++;
+    this.metrics.event("merge", host.robot, `${task.id} 併入 ${host.id}`);
     emit("log", { tag: "dispatch", robot: host.robot, html: `合併派工：<b>${task.id}</b> ${text}` });
     this.#bump();
   }
@@ -521,9 +679,12 @@ export class Fleet {
     let victim = null;
     for (const r of this.robots) {
       const t = r.task;
-      if (!t || r.preemptFor || r.needCharge || t.priority < 3 || !TASK_TYPES[t.type].preemptible) continue;
+      if (!t || r.fault || r.preemptFor || r.needCharge || t.priority < 3 || !TASK_TYPES[t.type].preemptible) continue;
       if (r.battery < S.minDispatch) continue;
-      const wrap = t.type === "rounds" && r.shelf ? 75 : 10;
+      // finishing the bed in progress (or waiting for the nurse at an alert) comes first
+      const k = r.activity.kind;
+      const bed = k === "alert" ? 180 : k === "measure" ? 45 : 0;
+      const wrap = (t.type === "rounds" && r.shelf ? 75 : 10) + bed;
       const eta = wrap + travelSeconds(this.lift, robotPose(r), task.start);
       if (!victim || eta < victim.eta) victim = { r, eta };
     }
@@ -557,6 +718,10 @@ export class Fleet {
   async #robotLoop(r, token) {
     for (;;) {
       try {
+        if (r.fault) {
+          await this.sim.until(() => !r.fault, token);
+          continue;
+        }
         if (r.assignment) await this.#runTask(r, token);
         else if (r.needCharge || (!r.onCharger && r.battery < this.settings.lowBattery)) await this.#chargeCycle(r, token);
         else await this.#idleCycle(r, token);
@@ -585,17 +750,25 @@ export class Fleet {
     r.task = task;
     for (const m of task.merged) m.robot = r;
     this.#bump();
+    // a task can be aborted on its own (robot fault) without touching the rest of the fleet
+    const tt = (r.taskToken = new Token(token));
     try {
-      if (r.parked) await this.#unparkFrom(r, token);
-      const res = await EXECUTORS[task.type](this.ctx, r, task, token);
+      if (r.parked) await this.#unparkFrom(r, tt);
+      const res = await EXECUTORS[task.type](this.ctx, r, task, tt);
       if (res && res.interrupted) this.#requeue(task, r, res.interrupted);
       else this.#complete(task, r);
     } catch (err) {
-      if (err instanceof CancelError || token.cancelled) throw err;
-      console.error(err);
-      this.#requeue(task, r, "error");
+      if (token.cancelled) throw err;
+      if (err instanceof CancelError && tt.cancelled) {
+        r.halt();
+        this.#requeue(task, r, "fault");
+      } else {
+        console.error(err);
+        this.#requeue(task, r, "error");
+      }
     } finally {
       r.task = null;
+      r.taskToken = null;
       r.focusPerson = null;
       if (r.assignment === task) r.assignment = null;
       this.#bump();
@@ -617,7 +790,11 @@ export class Fleet {
     task.explain = "";
     task.progress = Math.min(task.progress, 0.9);
     task.handovers = (task.handovers || 0) + 1;
-    if (reason === "preempt") {
+    if (reason === "preempt" && !r.preemptFor) {
+      // the P1 went to a robot that freed up first while this one was wrapping up
+      task.note = `P1 已由其他機器人接手，${left}，等待重新派工`;
+      task.step = "暫停・等待重新派工";
+    } else if (reason === "preempt") {
       const next = r.preemptFor;
       task.note = `被 ${next.id}（P1）中斷，${left}，等待重新派工`;
       task.step = "暫停・等待重新派工";
@@ -627,12 +804,16 @@ export class Fleet {
       next.state = "assigned";
       next.robot = r;
       r.assignment = next;
+      this.#absorb(next);
+      this.metrics.event("preempt", r, `${task.id} 暫停 → ${next.id}`);
       emit("log", { tag: "dispatch", robot: r, html: `${r.id} 於安全點暫停 <b>${task.id}</b>（${left}），改執行 <b>${next.id}</b>` });
-    } else if (reason === "battery") {
-      task.note = `${r.id} 電量 ${pct(r)} 交接，${left}`;
+    } else if (reason === "battery" || reason === "fault") {
+      task.note = reason === "fault" ? `${r.id} 故障，改派其他機器人${left ? `（${left}）` : ""}` : `${r.id} 電量 ${pct(r)} 交接，${left}`;
       task.step = "交接・等待其他機器人";
       this.kpi.handovers++;
-      r.needCharge = true;
+      if (reason === "battery") r.needCharge = true;
+      this.metrics.event("handover", r, `${task.id} ${reason === "fault" ? "故障改派" : "低電量交接"}`);
+      if (reason === "fault") emit("log", { tag: "dispatch", robot: r, html: `${r.id} 故障：<b>${task.id}</b>「${task.title}」改派其他機器人${left ? `（${left}）` : ""}` });
       if (r.preemptFor) {
         const p = r.preemptFor;
         r.preemptFor = null;
@@ -640,7 +821,7 @@ export class Fleet {
         p.state = "queued";
         p.robot = null;
         p.explain = "";
-        p.note = `${r.id} 電量不足無法接手，重新派工`;
+        p.note = `${r.id} ${reason === "fault" ? "故障" : "電量不足"}無法接手，重新派工`;
       }
       emit("log", { tag: "charge", robot: r, html: `${r.id} 電量 ${pct(r)} 低於 ${this.settings.criticalBattery}%：<b>${task.id}</b> 交接（${left}），先回充` });
     } else {
@@ -659,12 +840,14 @@ export class Fleet {
     task.note = "";
     this.#release(task);
     this.kpi.done++;
+    this.metrics.taskDone(task, r);
     for (const m of task.merged) {
       if (m.state !== "merged") continue;
       m.state = "merged-done";
       m.doneAt = this.sim.time;
       m.robot = r;
       this.kpi.done++;
+      this.metrics.taskDone(m, r);
     }
     const wait = task.startedAt - task.createdAt;
     emit("log", { tag: "dispatch", robot: r, html: `<b>${task.id}</b>「${task.title}」完成・等候 ${fmtS(wait)}・執行 ${fmtS(task.doneAt - task.startedAt)}` });
@@ -688,12 +871,15 @@ export class Fleet {
         m.doneAt = this.sim.time;
         m.robot = task.robot;
         this.kpi.done++;
+        this.metrics.taskDone(m, task.robot);
       }
     }
     this.#bump();
   }
 
   delivered(task, r) {
+    task.deliveredAt = this.sim.time;
+    for (const m of task.merged) m.deliveredAt = this.sim.time;
     this.kpi.deliveries += task.items.length;
     this.kpi.minutes += NURSE_MINUTES.delivery;
     emit("log", { tag: "staff", robot: r, html: `${FLOORS[task.floor].id} 已簽收 ${task.shelf.id}（${task.sub}）` });
@@ -726,6 +912,7 @@ export class Fleet {
       const alert = { ...res, robot: r.id, status: "已推播護理站與 LINE 群組", resolved: false, closed: false, at: this.sim.time };
       this.alerts.unshift(alert);
       this.alerts.length = Math.min(this.alerts.length, 8);
+      this.metrics.event("alert", r, `${res.floor} ${res.bed} ${res.flags[0]}`);
       emit("log", { tag: "alert", robot: r, html: `${res.floor} ${res.bed} ${res.flags.join("、")} → 推播 ${res.floor} 護理站與 LINE 群組` });
       const token = this.token;
       this.sim

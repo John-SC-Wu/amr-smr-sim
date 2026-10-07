@@ -3,12 +3,13 @@ import { on, formatClock } from "./sim.js";
 import { settings, setSetting, resetSettings, SETTINGS_SCHEMA } from "./settings.js";
 import { STRATEGIES, zoneMap } from "./dispatch.js";
 import { TASK_TYPES } from "./tasks.js";
+import { Timeline, LiveCharts, stateLegend } from "./insights.js";
 
 const $ = (id) => document.getElementById(id);
 const TAGS = { api: "API", lift: "電梯", vitals: "量測", alert: "通報", staff: "人員", nav: "導航", dispatch: "派工", traffic: "交通", charge: "充電" };
 const CATS = { dispatch: "dispatch", traffic: "traffic", lift: "traffic", nav: "traffic", charge: "charge", vitals: "care", alert: "care", staff: "care" };
-const ICONS = { measure: "i-heart", lift: "i-lift", alert: "i-alert", charge: "i-battery", dock: "i-box", handoff: "i-box", patrol: "i-shield", move: "i-pin", idle: "i-robot" };
-const STATE_KIND = { move: "move", dock: "dock", handoff: "dock", measure: "measure", lift: "lift", alert: "alert", charge: "charge", patrol: "move", idle: "idle" };
+const ICONS = { measure: "i-heart", lift: "i-lift", alert: "i-alert", fault: "i-alert", charge: "i-battery", dock: "i-box", handoff: "i-box", patrol: "i-shield", move: "i-pin", idle: "i-robot" };
+const STATE_KIND = { move: "move", dock: "dock", handoff: "dock", measure: "measure", lift: "lift", alert: "alert", fault: "alert", charge: "charge", patrol: "move", idle: "idle" };
 const SENSOR_STATE = { idle: "待命", detect: "偵測目標", measure: "量測中", upload: "上傳中", done: "已上傳" };
 
 function css(name) {
@@ -16,7 +17,7 @@ function css(name) {
 }
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-const chip = (r) => (r ? `<span class="rchip" style="--rc:${r.color}">${r.id}</span>` : "");
+const chip = (r) => (r ? `<span class="rchip" style="--rc:${r.css}">${r.id}</span>` : "");
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 export class Dashboard {
@@ -35,7 +36,13 @@ export class Dashboard {
     this.detailRobot = null;
 
     this.lidarCanvas = $("lidar");
+    this.timeline = new Timeline(world, $("bp-timeline"));
+    this.charts = new LiveCharts(world, $("bp-charts"));
+    this.btab = "board";
+    this.chartTimer = 0;
+    $("alloc-legend").innerHTML = stateLegend();
     this.#bindControls();
+    this.#bindViews();
     this.#buildSettings();
     this.#bindEvents();
     this.#buildStaticLabels();
@@ -49,16 +56,19 @@ export class Dashboard {
   #bindControls() {
     const { sim } = this.w;
     const speedButtons = [...document.querySelectorAll("[data-speed]")];
+    this.syncSpeed = () => {
+      for (const b of speedButtons) {
+        const s = Number(b.dataset.speed);
+        b.setAttribute("aria-pressed", String(s === 0 ? sim.paused : !sim.paused && s === sim.speed));
+      }
+    };
     const setSpeed = (v) => {
       if (v === 0) sim.paused = !sim.paused;
       else {
         sim.paused = false;
         sim.speed = v;
       }
-      for (const b of speedButtons) {
-        const s = Number(b.dataset.speed);
-        b.setAttribute("aria-pressed", String(s === 0 ? sim.paused : !sim.paused && s === sim.speed));
-      }
+      this.syncSpeed();
     };
     for (const b of speedButtons) b.addEventListener("click", () => setSpeed(Number(b.dataset.speed)));
 
@@ -79,9 +89,15 @@ export class Dashboard {
     for (const b of document.querySelectorAll("[data-add]")) {
       b.addEventListener("click", () => {
         const r = this.fleet.quickAdd(b.dataset.add);
-        if (b.dataset.add === "battery" && r) cam.follow(r);
+        if ((b.dataset.add === "battery" || b.dataset.add === "fault") && r && r.id) cam.follow(r);
+        const menu = b.closest("details");
+        if (menu) menu.open = false;
       });
     }
+    document.addEventListener("click", (e) => {
+      const menu = $("demo-menu");
+      if (menu.open && !menu.contains(e.target)) menu.open = false;
+    });
 
     // log filter
     const filters = [...document.querySelectorAll("[data-filter]")];
@@ -118,15 +134,62 @@ export class Dashboard {
     });
     for (const b of drawer.querySelectorAll("[data-tab]")) b.addEventListener("click", () => this.#tab(b.dataset.tab));
     $("reset-settings").addEventListener("click", () => {
-      const before = settings.robots;
+      const before = `${settings.robots}:${settings.seed}`;
       resetSettings();
       this.#syncSettings();
-      if (settings.robots !== before) this.fleet.restart();
+      if (`${settings.robots}:${settings.seed}` !== before) this.fleet.restart();
     });
     $("restart-sim").addEventListener("click", () => {
       close();
       this.fleet.restart();
     });
+  }
+
+  // ------------------------------------------------- stage view + bottom tabs
+  #bindViews() {
+    for (const b of document.querySelectorAll("[data-view]")) b.addEventListener("click", () => this.setView(b.dataset.view));
+    for (const b of document.querySelectorAll("[data-btab]")) b.addEventListener("click", () => this.setTab(b.dataset.btab));
+    let view = "3d";
+    try {
+      view = localStorage.getItem("kachaka-ltc-view") || "3d";
+    } catch {
+      /* storage blocked: start in 3D */
+    }
+    if (!this.w.renderer) view = "plan";
+    if (view === "split" && window.innerWidth <= 640) view = "3d";
+    this.setView(view, false);
+  }
+
+  setView(view, remember = true) {
+    const stage = $("stage");
+    stage.dataset.view = view;
+    // one switch, parked where it is visible: over the 3D view, or in the plan's header
+    const seg = $("view-seg");
+    const home = view === "3d" ? $("hud-right") : stage.querySelector(".plan-head");
+    if (seg.parentElement !== home) home.appendChild(seg);
+    for (const b of document.querySelectorAll("[data-view]")) b.setAttribute("aria-pressed", String(b.dataset.view === view));
+    this.w.view = view;
+    if (this.w.plan) this.w.plan.setVisible(view !== "3d");
+    if (remember) {
+      try {
+        localStorage.setItem("kachaka-ltc-view", view);
+      } catch {
+        /* per-visit only */
+      }
+    }
+  }
+
+  setTab(name) {
+    this.btab = name;
+    for (const b of document.querySelectorAll("[data-btab]")) {
+      const on = b.dataset.btab === name;
+      b.setAttribute("aria-selected", String(on));
+      b.setAttribute("aria-pressed", String(on));
+    }
+    $("bp-board").hidden = name !== "board";
+    $("bp-timeline").hidden = name !== "timeline";
+    $("bp-charts").hidden = name !== "charts";
+    this.chartTimer = 99;
   }
 
   #tab(name) {
@@ -173,7 +236,7 @@ export class Dashboard {
       if (settings[key] === value) return;
       setSetting(key, value);
       this.#syncSettings();
-      if (key === "robots") this.fleet.restart();
+      if (key === "robots" || key === "seed") this.fleet.restart();
     });
     form.addEventListener("input", (e) => {
       const el = e.target;
@@ -251,11 +314,13 @@ export class Dashboard {
         offsetY: -4,
         dimWhenFaded: true,
       });
-      item.el.style.setProperty("--rc", r.color);
+      item.el.style.setProperty("--rc", r.css);
       this.robotLabels.set(r, item);
       this.#robotTag(r);
     }
     this.#buildFleetList();
+    $("battery-legend").innerHTML = this.fleet.robots.map((r) => `<li><i class="key-line" style="background:${r.css}"></i>${r.id}</li>`).join("");
+    this.chartTimer = 99;
     this.#renderHistory();
     this.#renderKpi();
     this.#renderAlert();
@@ -287,7 +352,7 @@ export class Dashboard {
     $("kpi-alerts").textContent = k.alerts;
     $("kpi-rides").textContent = this.w.lift.stats.rides;
     const q = this.w.lift.order().filter((t) => !t.boarded).length;
-    $("kpi-queue").textContent = q ? `次・${q} 台排隊` : "次";
+    $("kpi-queue").textContent = q ? `次・候梯 ${q}` : "次";
     $("kpi-minutes").textContent = k.minutes;
   }
 
@@ -343,7 +408,7 @@ export class Dashboard {
         text,
         kind: "robot",
         name,
-        color: r.color,
+        color: r.css,
       });
       return;
     }
@@ -404,7 +469,7 @@ export class Dashboard {
     this.cards.clear();
     for (const r of this.fleet.robots) {
       const li = document.createElement("li");
-      li.innerHTML = `<button type="button" class="rcard" style="--rc:${r.color}" aria-pressed="false">
+      li.innerHTML = `<button type="button" class="rcard" style="--rc:${r.css}" aria-pressed="false">
         <span class="rc-id">${r.id}</span>
         <span class="rc-main"><b class="rc-state"></b><small class="rc-task"></small></span>
         <span class="rc-bat"><b></b><i class="rc-bar"><i></i></i></span>
@@ -515,6 +580,12 @@ export class Dashboard {
   // ------------------------------------------------------------- frame
   update(realDt) {
     for (const [s, t] of this.vitalsHold) this.vitalsHold.set(s, Math.max(0, t - realDt));
+    this.chartTimer += realDt;
+    if (this.chartTimer > 1 && this.btab !== "board") {
+      this.chartTimer = 0;
+      if (this.btab === "timeline") this.timeline.render();
+      else this.charts.render();
+    }
     this.timer += realDt;
     this.slow += realDt;
     if (this.timer > 0.12) {
@@ -555,7 +626,7 @@ export class Dashboard {
     if (this.detailRobot !== robot) {
       this.detailRobot = robot;
       $("rd-chip").textContent = robot.id;
-      $("rd-chip").style.setProperty("--rc", robot.color);
+      $("rd-chip").style.setProperty("--rc", robot.css);
       $("rd-title").textContent = `${robot.name} · ${robot.serial}`;
       this.lidarColors = null;
     }
@@ -697,7 +768,7 @@ export class Dashboard {
       this.nowRobot = robot;
       const c = $("now-chip");
       c.textContent = robot.id;
-      c.style.setProperty("--rc", robot.color);
+      c.style.setProperty("--rc", robot.css);
     }
     $("now-title").textContent = a.detail ? `${a.label} · ${a.detail}` : a.label;
     const t = robot.task || robot.assignment;
@@ -745,7 +816,7 @@ export class Dashboard {
       c.width = Math.round(r.width * dpr);
       c.height = Math.round(r.height * dpr);
     }
-    if (!this.lidarColors) this.lidarColors = { line: css("--line"), robot: robot.color, hit: css("--crit"), ink: css("--ink-3"), fan: css("--accent") };
+    if (!this.lidarColors) this.lidarColors = { line: css("--line"), robot: css(`--robot-${robot.def.slot}`), hit: css("--crit"), ink: css("--ink-3"), fan: css("--accent") };
     const col = this.lidarColors;
     const g = c.getContext("2d");
     g.setTransform(dpr, 0, 0, dpr, 0, 0);

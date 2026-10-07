@@ -5,6 +5,7 @@ const KEY = "kachaka-ltc-fleet-v1";
 
 export const DEFAULTS = {
   robots: 3,
+  seed: 1, // scenario number: the same number replays the same day
   // dispatch
   strategy: "weighted", // weighted | nearest | zone | roundrobin
   wTravel: 1.0,
@@ -62,6 +63,7 @@ function save() {
 function normalize(changed = null) {
   const s = settings;
   s.robots = Math.min(5, Math.max(1, Math.round(s.robots)));
+  s.seed = Math.min(5, Math.max(1, Math.round(s.seed)));
   if (changed === "criticalBattery") s.lowBattery = Math.max(s.lowBattery, s.criticalBattery + 5);
   else s.criticalBattery = Math.min(s.criticalBattery, s.lowBattery - 5);
   s.resumeBattery = Math.max(s.resumeBattery, s.lowBattery + 10);
@@ -177,6 +179,12 @@ export const SETTINGS_SCHEMA = [
         type: "seg",
         label: "機器人數量（變更後從 07:58 重新開始）",
         options: [1, 2, 3, 4, 5].map((n) => [n, `${n} 台`]),
+      },
+      {
+        key: "seed",
+        type: "seg",
+        label: "情境編號（同一編號＝同一天的任務與數值，可重播比較）",
+        options: [1, 2, 3, 4, 5].map((n) => [n, `情境 ${n}`]),
       },
     ],
   },
