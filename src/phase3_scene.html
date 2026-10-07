@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Kachaka 醫院協作</title>
+    <meta
+      name="description"
+      content="Kachaka Pro 自主移動機器人在多樓層醫院中搭電梯巡邏、以緯創 BestShape VS 毫米波感測器量測生命徵象並配送藥品的 3D 概念模擬。"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap"
+    />
+    <link rel="stylesheet" href="css/hospital-styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <svg class="sprite" aria-hidden="true" focusable="false">
+      <symbol id="i-robot" viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="8" rx="3" /><circle cx="7.5" cy="18.5" r="1.6" /><circle cx="16.5" cy="18.5" r="1.6" /><path d="M12 9V5m-2 0h4" /></symbol>
+      <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z" /></symbol>
+      <symbol id="i-wind" viewBox="0 0 24 24"><path d="M3 9h11a3 3 0 1 0-3-3M3 14h15a3 3 0 1 1-3 3M3 19h7" /></symbol>
+      <symbol id="i-radar" viewBox="0 0 24 24"><path d="M5 19a10 10 0 0 1 0-14M8.5 15.5a5 5 0 0 1 0-7M12 12h.01M19 5a10 10 0 0 1 0 14M15.5 8.5a5 5 0 0 1 0 7" /></symbol>
+      <symbol id="i-box" viewBox="0 0 24 24"><path d="M4 8l8-4 8 4v8l-8 4-8-4V8Zm0 0 8 4 8-4M12 12v8" /></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z" /><path d="m9 12 2 2 4-4" /></symbol>
+      <symbol id="i-battery" viewBox="0 0 24 24"><rect x="3" y="7" width="16" height="10" rx="2" /><path d="M21 11v2M11 9l-2 3h4l-2 3" /></symbol>
+      <symbol id="i-lift" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2" /><path d="m9 9 3-3 3 3M9 15l3 3 3-3" /></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19L12 4Z" /><path d="M12 10v4m0 3h.01" /></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12" /></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s6-5.6 6-11a6 6 0 0 0-12 0c0 5.4 6 11 6 11Z" /><circle cx="12" cy="10" r="2.2" /></symbol>
+    </svg>
+
+    <div class="app" id="app">
+      <header class="brand">
+        <div class="brand-mark" aria-hidden="true"><svg><use href="#i-robot" /></svg></div>
+        <div class="brand-text">
+          <h1>Kachaka 醫院協作</h1>
+          <p>Kachaka Pro × 緯創 BestShape VS<span class="sim-tag">概念模擬</span></p>
+        </div>
+      </header>
+
+      <div class="ctrl">
+        <div class="clock">
+          <span class="label">模擬時間</span>
+          <b id="clock">07:58:00</b>
+          <small id="date"></small>
+        </div>
+        <div class="seg speed" role="group" aria-label="模擬速度">
+          <button type="button" id="speed-0" data-speed="0" aria-pressed="false" aria-label="暫停"><svg><use href="#i-pause" /></svg></button>
+          <button type="button" id="speed-1" data-speed="1" aria-pressed="false">1×</button>
+          <button type="button" id="speed-6" data-speed="6" aria-pressed="true">6×</button>
+          <button type="button" id="speed-12" data-speed="12" aria-pressed="false">12×</button>
+        </div>
+      </div>
+
+      <section class="kpis" aria-label="今日統計（模擬資料）">
+        <div class="kpi"><span class="k-label">今日量測</span><span class="k-value"><b id="kpi-beds">4</b><small>床</small></span></div>
+        <div class="kpi" data-tone="crit"><span class="k-label">異常通報</span><span class="k-value"><b id="kpi-alerts">0</b><small>件</small></span></div>
+        <div class="kpi"><span class="k-label">物品配送</span><span class="k-value"><b id="kpi-deliveries">1</b><small>趟</small></span></div>
+        <div class="kpi"><span class="k-label">電梯搭乘</span><span class="k-value"><b id="kpi-rides">3</b><small>次</small></span></div>
+        <div class="kpi"><span class="k-label">行駛里程</span><span class="k-value"><b id="kpi-km">0.41</b><small>km</small></span></div>
+        <div class="kpi" data-tone="accent"><span class="k-label">省下護理時間</span><span class="k-value"><b id="kpi-minutes">54</b><small>分・估算</small></span></div>
+      </section>
+
+      <aside class="panel p-robot" aria-labelledby="robot-title">
+        <div class="panel-head">
+          <h2 id="robot-title"><svg><use href="#i-robot" /></svg>Kachaka Pro</h2>
+          <span class="pill" id="robot-state" data-kind="charge">充電中</span>
+        </div>
+        <div class="battery">
+          <div class="bat-row">
+            <span class="label">電量</span>
+            <b id="bat-pct">86%</b>
+            <span class="bat-mode" id="bat-mode">充電中</span>
+          </div>
+          <div class="bar"><i id="bat-bar" style="--v: 0.86"></i></div>
+        </div>
+        <dl class="tele">
+          <div><dt>線速度</dt><dd><b id="t-speed">0.00</b><small>/ 0.30 m/s</small></dd></div>
+          <div><dt>樓層地圖</dt><dd><b id="t-floor">1F</b><code id="t-map">hosp-1f-lobby</code></dd></div>
+          <div><dt>位姿 x, y, θ</dt><dd><code id="t-pose">-1.40, 4.45, 90°</code></dd></div>
+          <div><dt>對接家具</dt><dd id="t-shelf">—</dd></div>
+          <div><dt>今日里程</dt><dd><b id="t-odo">412</b><small>m</small></dd></div>
+        </dl>
+        <div class="cmd">
+          <div class="cmd-head">
+            <span class="label">目前 API 指令</span>
+            <span class="cmd-state" id="cmd-state" data-state="PENDING">PENDING</span>
+          </div>
+          <code id="cmd-text">get_battery_info()</code>
+        </div>
+        <figure class="lidar">
+          <canvas id="lidar" aria-label="LiDAR 掃描俯視圖"></canvas>
+          <figcaption><span>2D LiDAR · 270° · 120 點</span><span>最近障礙 <b id="lidar-near">--</b> m</span></figcaption>
+        </figure>
+        <div class="detect">
+          <span class="label">物件偵測 get_object_detection</span>
+          <ul id="detect-list"><li class="muted">—</li></ul>
+        </div>
+        <div class="elev">
+          <div class="elev-head"><span class="label">電梯 IoT</span><span id="elev-state">1F · 門關閉</span></div>
+          <ol class="elev-floors" id="elev-floors">
+            <li data-floor="0">1F</li>
+            <li data-floor="1">2F</li>
+            <li data-floor="2">3F</li>
+            <li data-floor="3">4F</li>
+          </ol>
+        </div>
+      </aside>
+
+      <div class="stage-wrap">
+        <main class="stage" id="stage">
+          <canvas id="scene" role="img" aria-label="醫院 3D 場景：四層樓建築與外掛玻璃電梯，Kachaka 機器人在各樓層執行任務"></canvas>
+          <div class="labels" id="labels" aria-hidden="true"></div>
+          <div class="hud hud-top">
+            <div class="floor-badge" id="floor-badge">
+              <b id="hud-floor">1F</b>
+              <span><span id="hud-floor-name">門診大廳・藥局</span><small id="hud-clock">07:58</small></span>
+            </div>
+            <div class="seg cam" role="group" aria-label="視角">
+              <button type="button" id="cam-auto" data-cam="auto" aria-pressed="true">跟隨</button>
+              <button type="button" id="cam-overview" data-cam="overview" aria-pressed="false">全景</button>
+              <button type="button" id="cam-free" data-cam="free" aria-pressed="false">自由</button>
+            </div>
+          </div>
+          <div class="hud hud-now" id="hud-now">
+            <span class="now-ic" id="now-ic"><svg><use href="#i-battery" /></svg></span>
+            <div class="now-text">
+              <b id="now-title">準備出發</b>
+              <span id="now-detail">Kachaka 於 1F 充電座待命</span>
+            </div>
+            <div class="now-metric" id="now-metric"></div>
+            <div class="now-prog"><i id="now-prog"></i></div>
+          </div>
+          <p class="hud-hint" id="hud-hint">拖曳旋轉・滾輪或雙指縮放</p>
+          <div class="stage-fallback" id="fallback" hidden>
+            <p>此裝置無法啟用 WebGL，3D 場景無法顯示；右側與下方數據仍會即時更新。</p>
+          </div>
+        </main>
+      </div>
+
+      <aside class="panel p-vitals" aria-labelledby="vitals-title">
+        <div class="panel-head">
+          <h2 id="vitals-title"><svg><use href="#i-radar" /></svg>生理量測</h2>
+          <span class="pill" id="vs-state" data-kind="idle">待命</span>
+        </div>
+        <p class="sensor-sub">緯創醫學 BestShape VS · 毫米波雷達，床邊 1 公尺內非接觸量測</p>
+        <div class="patient">
+          <div class="bed-chip"><b id="vs-bed">—</b><span id="vs-floor">--</span></div>
+          <div class="who">
+            <b id="vs-name">等待下一床</b>
+            <span id="vs-meta">巡房開始後自動帶入床位資料</span>
+          </div>
+        </div>
+        <div class="monitor" role="group" aria-label="即時生理波形">
+          <div class="mon-row" data-sig="hr">
+            <div class="mon-label"><span>HR</span><small>心率 bpm</small></div>
+            <canvas id="wave-hr"></canvas>
+            <b class="mon-val" id="vs-hr">--</b>
+          </div>
+          <div class="mon-row" data-sig="rr">
+            <div class="mon-label"><span>RR</span><small>呼吸 次/分</small></div>
+            <canvas id="wave-rr"></canvas>
+            <b class="mon-val" id="vs-rr">--</b>
+          </div>
+          <div class="mon-foot">
+            <span>距離 <b id="vs-dist">--</b> m</span>
+            <span>訊號品質 <b id="vs-sqi">--</b></span>
+            <span id="vs-time">0 / 30 s</span>
+          </div>
+          <div class="mon-prog"><i id="vs-prog"></i></div>
+        </div>
+        <div class="alert-box" id="vs-alert" hidden>
+          <svg><use href="#i-alert" /></svg>
+          <div><b id="alert-title"></b><span id="alert-detail"></span></div>
+        </div>
+        <div class="history">
+          <div class="sub-head"><h3>量測紀錄</h3><span>MQTT → 護理資訊系統</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>時間</th><th>床位</th><th>HR</th><th>RR</th><th>判讀</th></tr></thead>
+              <tbody id="vs-history"></tbody>
+            </table>
+          </div>
+        </div>
+      </aside>
+
+      <section class="panel p-timeline" aria-labelledby="tl-title">
+        <div class="panel-head">
+          <h2 id="tl-title">任務排程</h2>
+          <span class="hint">點選任務可直接切換情境</span>
+          <span class="pill" id="cycle" data-kind="idle">第 1 輪</span>
+        </div>
+        <ol class="tasks" id="tasks"></ol>
+      </section>
+
+      <section class="panel p-log" aria-labelledby="log-title">
+        <div class="panel-head">
+          <h2 id="log-title">即時事件</h2>
+          <span class="live"><i></i>LIVE</span>
+        </div>
+        <ol class="log" id="log"></ol>
+      </section>
+
+      <footer class="credits">
+        <span>機器人模型：<a href="https://github.com/pf-robotics/kachaka-api" target="_blank" rel="noopener">pf-robotics/kachaka-api</a>（Apache-2.0）</span>
+        <span>本頁為概念模擬，病患、數據與醫院皆為虛構，與 Preferred Robotics、緯創醫學、西格瑪機器人無官方關聯。</span>
+      </footer>
+    </div>
+
+    <script type="module" src="js/phase_3/main.js"></script>
+  </body>
+</html>
