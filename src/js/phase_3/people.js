@@ -63,6 +63,7 @@ export class Person {
     this.yaw = yaw;
     this.home = { x, z, yaw, sitting, pose };
     this.sitting = sitting;
+    this.busy = null; // robot / task this person is attending to
     this.onAvoid = null;
     this.path = [];
     this.finalYaw = null;
@@ -150,6 +151,7 @@ export class Person {
   }
 
   resetHome() {
+    this.busy = null;
     this.path = [];
     this.walking = false;
     this.finalYaw = null;
@@ -180,12 +182,12 @@ export class Person {
     return sim.until(() => this.finalYaw === null, token);
   }
 
-  update(dt, robot) {
+  update(dt, robots) {
     this.idleT += dt;
     this.avoidCooldown = Math.max(0, this.avoidCooldown - dt);
     let moving = false;
     if (this.walking && this.path.length) {
-      this.#avoidRobot(robot);
+      for (const r of robots) this.#avoidRobot(r);
       const t = this.path[0];
       const dx = t.x - this.x;
       const dz = t.z - this.z;

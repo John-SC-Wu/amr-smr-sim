@@ -44,7 +44,11 @@ function hash(n) {
 export class VitalSensor {
   constructor({ cart, sim }) {
     this.cart = cart;
+    this.id = cart.id;
+    this.floor = cart.home.floor;
     this.sim = sim;
+    this.robot = null;
+    this.startedAt = -1;
     this.state = "idle";
     this.bed = null;
     this.patient = null;
@@ -89,27 +93,29 @@ export class VitalSensor {
     return target.set(c.x, this.bed.floor * FLOOR_GAP + c.y, c.z);
   }
 
-  async measure(bed, patient, token) {
+  async measure(bed, patient, token, robot = null) {
     this.bed = bed;
     this.patient = patient;
+    this.robot = robot;
+    this.startedAt = this.sim.time;
     this.elapsed = 0;
     this.hr = this.rr = this.sqi = null;
     this.state = "detect";
     this.cart.setActive("detect");
-    emit("vitals", { phase: "detect", bed });
+    emit("vitals", { phase: "detect", bed, sensor: this });
     await this.sim.wait(2.5, token);
     this.distance = this.cart.radarOrigin(this.tmpA).distanceTo(this.chestWorld(this.tmpB));
-    emit("log", { tag: "vitals", html: `BestShape VS 鎖定 <b>${bed.id}</b> 胸腔區域，距離 ${this.distance.toFixed(2)} m` });
+    emit("log", { tag: "vitals", robot, html: `${this.id} 鎖定 <b>${bed.id}</b> 胸腔區域，距離 ${this.distance.toFixed(2)} m` });
     this.state = "measure";
     this.cart.setActive("measure");
-    emit("vitals", { phase: "measure", bed });
+    emit("vitals", { phase: "measure", bed, sensor: this });
     await this.sim.until(() => this.elapsed >= this.duration, token);
 
     this.hr = Math.round(patient.hr);
     this.rr = Math.round(patient.rr);
     this.sqi = 0.9 + hash(this.sim.time) * 0.07;
     this.state = "upload";
-    emit("vitals", { phase: "upload", bed });
+    emit("vitals", { phase: "upload", bed, sensor: this });
     await this.sim.wait(1.3, token);
     const verdict = classify(this.hr, this.rr);
     const result = {
@@ -126,7 +132,7 @@ export class VitalSensor {
     this.last = result;
     this.state = "done";
     this.cart.setActive("done");
-    emit("vitals", { phase: "done", bed, result });
+    emit("vitals", { phase: "done", bed, result, sensor: this });
     return result;
   }
 
@@ -192,6 +198,9 @@ export class VitalSensor {
     this.state = "idle";
     this.bed = null;
     this.patient = null;
+    this.robot = null;
+    this.last = null;
+    this.startedAt = -1;
     this.hr = this.rr = this.sqi = this.distance = null;
     this.elapsed = 0;
     this.beamUniforms.uOpacity.value = 0;

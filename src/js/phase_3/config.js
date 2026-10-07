@@ -49,4 +49,28 @@ export const MEASURE_SECONDS = 30; // radar acquisition window per bed
 export const START_CLOCK = 7 * 3600 + 58 * 60; // 07:58:00
 
 // minutes of nursing time a robot task replaces (shown as an estimate)
-export const NURSE_MINUTES = { vitals: 6, delivery: 20, patrol: 10 };
+export const NURSE_MINUTES = { vitals: 6, delivery: 20, patrol: 10, remeasure: 6 };
+
+// --- fleet --------------------------------------------------------------
+// two-way corridor, keep right: eastbound (+x) robots run on the +z side
+export const LANES = { east: 0.3, west: -0.3 };
+
+// per-robot identity; start batteries differ so battery-aware dispatch shows up early
+export const ROBOT_DEFS = [
+  { id: "K1", serial: "KCK-PRO-0427", color: "#0f9d8f", battery: 88 },
+  { id: "K2", serial: "KCK-PRO-0431", color: "#e8890c", battery: 66 },
+  { id: "K3", serial: "KCK-PRO-0436", color: "#8b5cf6", battery: 41 },
+  { id: "K4", serial: "KCK-PRO-0442", color: "#2f7ed8", battery: 79 },
+  { id: "K5", serial: "KCK-PRO-0448", color: "#d9468f", battery: 52 },
+];
+export const MAX_ROBOTS = ROBOT_DEFS.length;
+
+// battery model at ×1 (% per hour); the settings' demo boost multiplies all of them
+export const BATTERY = { drainMove: 12, drainIdle: 3, loadFactor: 1.25, chargeRate: 45 };
+
+export const PRIORITY = {
+  1: { label: "P1", name: "緊急" },
+  2: { label: "P2", name: "高" },
+  3: { label: "P3", name: "一般" },
+  4: { label: "P4", name: "例行" },
+};

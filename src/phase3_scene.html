@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Kachaka 長照協作</title>
+    <title>Kachaka 長照車隊</title>
     <meta
       name="description"
-      content="Kachaka Pro 自主移動機器人在多樓層長照機構中搭電梯巡房、以緯創 BestShape VS 毫米波感測器量測住民生命徵象、配送藥品並巡視失智照顧專區的 3D 概念模擬。"
+      content="多台 Kachaka Pro 在多樓層長照機構中協作：任務佇列與可調整的派工策略、走廊靠右雙向車道與房間通行預約、電梯排隊、充電座分配與低電量交接，並以緯創 BestShape VS 量測住民生命徵象的 3D 概念模擬。"
     />
     <link rel="stylesheet" href="css/hospital-styles.css" />
     <script type="importmap">
@@ -22,7 +22,6 @@
     <svg class="sprite" aria-hidden="true" focusable="false">
       <symbol id="i-robot" viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="8" rx="3" /><circle cx="7.5" cy="18.5" r="1.6" /><circle cx="16.5" cy="18.5" r="1.6" /><path d="M12 9V5m-2 0h4" /></symbol>
       <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z" /></symbol>
-      <symbol id="i-wind" viewBox="0 0 24 24"><path d="M3 9h11a3 3 0 1 0-3-3M3 14h15a3 3 0 1 1-3 3M3 19h7" /></symbol>
       <symbol id="i-radar" viewBox="0 0 24 24"><path d="M5 19a10 10 0 0 1 0-14M8.5 15.5a5 5 0 0 1 0-7M12 12h.01M19 5a10 10 0 0 1 0 14M15.5 8.5a5 5 0 0 1 0 7" /></symbol>
       <symbol id="i-box" viewBox="0 0 24 24"><path d="M4 8l8-4 8 4v8l-8 4-8-4V8Zm0 0 8 4 8-4M12 12v8" /></symbol>
       <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z" /><path d="m9 12 2 2 4-4" /></symbol>
@@ -31,14 +30,17 @@
       <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19L12 4Z" /><path d="M12 10v4m0 3h.01" /></symbol>
       <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12" /></symbol>
       <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s6-5.6 6-11a6 6 0 0 0-12 0c0 5.4 6 11 6 11Z" /><circle cx="12" cy="10" r="2.2" /></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></symbol>
+      <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2" /><circle cx="18" cy="6" r="2" /><path d="M8 18h7a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7" /></symbol>
     </svg>
 
     <div class="app" id="app">
       <header class="brand">
         <div class="brand-mark" aria-hidden="true"><svg><use href="#i-robot" /></svg></div>
         <div class="brand-text">
-          <h1>Kachaka 長照協作</h1>
-          <p>Kachaka Pro × 緯創 BestShape VS<span class="sim-tag">概念模擬</span></p>
+          <h1>Kachaka 長照車隊</h1>
+          <p>多機協作 × 緯創 BestShape VS<span class="sim-tag">概念模擬</span></p>
         </div>
       </header>
 
@@ -46,7 +48,6 @@
         <div class="clock">
           <span class="label">模擬時間</span>
           <b id="clock">07:58:00</b>
-          <small id="date"></small>
         </div>
         <div class="seg speed" role="group" aria-label="模擬速度">
           <button type="button" id="speed-0" data-speed="0" aria-pressed="false" aria-label="暫停"><svg><use href="#i-pause" /></svg></button>
@@ -54,66 +55,79 @@
           <button type="button" id="speed-6" data-speed="6" aria-pressed="true">6×</button>
           <button type="button" id="speed-12" data-speed="12" aria-pressed="false">12×</button>
         </div>
+        <button type="button" class="btn-settings" id="open-settings" aria-haspopup="dialog" aria-controls="drawer">
+          <svg><use href="#i-sliders" /></svg><span>調度設定</span>
+        </button>
       </div>
 
       <section class="kpis" aria-label="今日統計（模擬資料）">
+        <div class="kpi"><span class="k-label">完成任務</span><span class="k-value"><b id="kpi-done">0</b><small>件</small></span></div>
+        <div class="kpi"><span class="k-label">平均等候</span><span class="k-value"><b id="kpi-wait">0.0</b><small>分</small></span></div>
         <div class="kpi"><span class="k-label">今日量測</span><span class="k-value"><b id="kpi-beds">4</b><small>床</small></span></div>
         <div class="kpi" data-tone="crit"><span class="k-label">異常通報</span><span class="k-value"><b id="kpi-alerts">0</b><small>件</small></span></div>
-        <div class="kpi"><span class="k-label">物品配送</span><span class="k-value"><b id="kpi-deliveries">1</b><small>趟</small></span></div>
-        <div class="kpi"><span class="k-label">電梯搭乘</span><span class="k-value"><b id="kpi-rides">3</b><small>次</small></span></div>
-        <div class="kpi"><span class="k-label">行駛里程</span><span class="k-value"><b id="kpi-km">0.41</b><small>km</small></span></div>
-        <div class="kpi" data-tone="accent"><span class="k-label">省下護理時間</span><span class="k-value"><b id="kpi-minutes">54</b><small>分・估算</small></span></div>
+        <div class="kpi"><span class="k-label">電梯搭乘・排隊</span><span class="k-value"><b id="kpi-rides">0</b><small id="kpi-queue">次</small></span></div>
+        <div class="kpi" data-tone="accent"><span class="k-label">省下護理時間</span><span class="k-value"><b id="kpi-minutes">24</b><small>分・估算</small></span></div>
       </section>
 
-      <aside class="panel p-robot" aria-labelledby="robot-title">
+      <aside class="panel p-fleet" aria-labelledby="fleet-title">
         <div class="panel-head">
-          <h2 id="robot-title"><svg><use href="#i-robot" /></svg>Kachaka Pro</h2>
-          <span class="pill" id="robot-state" data-kind="charge">充電中</span>
+          <h2 id="fleet-title"><svg><use href="#i-robot" /></svg>車隊</h2>
+          <span class="hint" id="fleet-km">0.00 km</span>
+          <span class="pill" id="fleet-count" data-kind="idle">3 台</span>
         </div>
-        <div class="battery">
-          <div class="bat-row">
-            <span class="label">電量</span>
-            <b id="bat-pct">86%</b>
-            <span class="bat-mode" id="bat-mode">充電中</span>
+        <ul class="fleet-list" id="fleet-list" aria-label="機器人（點選可跟隨並查看詳細）"></ul>
+        <details class="rdetail" id="rdetail" open>
+          <summary>
+            <span class="rchip" id="rd-chip">K1</span>
+            <span id="rd-title">遙測與感測</span>
+            <span class="pill" id="robot-state" data-kind="charge">充電中</span>
+          </summary>
+          <div class="battery">
+            <div class="bat-row">
+              <span class="label">電量</span>
+              <b id="bat-pct">--%</b>
+              <span class="bat-mode" id="bat-mode"></span>
+            </div>
+            <div class="bar"><i id="bat-bar" style="--v: 0.5"></i></div>
           </div>
-          <div class="bar"><i id="bat-bar" style="--v: 0.86"></i></div>
-        </div>
-        <dl class="tele">
-          <div><dt>線速度</dt><dd><b id="t-speed">0.00</b><small>/ 0.30 m/s</small></dd></div>
-          <div><dt>樓層地圖</dt><dd><b id="t-floor">1F</b><code id="t-map">hosp-1f-lobby</code></dd></div>
-          <div><dt>位姿 x, y, θ</dt><dd><code id="t-pose">-1.40, 4.45, 90°</code></dd></div>
-          <div><dt>對接家具</dt><dd id="t-shelf">—</dd></div>
-          <div><dt>今日里程</dt><dd><b id="t-odo">412</b><small>m</small></dd></div>
-        </dl>
-        <div class="cmd">
-          <div class="cmd-head">
-            <span class="label">目前 API 指令</span>
-            <span class="cmd-state" id="cmd-state" data-state="PENDING">PENDING</span>
+          <dl class="tele">
+            <div><dt>線速度</dt><dd><b id="t-speed">0.00</b><small>/ 0.30 m/s</small></dd></div>
+            <div><dt>樓層地圖</dt><dd><b id="t-floor">1F</b><code id="t-map">ltc-1f-lobby</code></dd></div>
+            <div><dt>位姿 x, y, θ</dt><dd><code id="t-pose">--</code></dd></div>
+            <div><dt>對接家具</dt><dd id="t-shelf">—</dd></div>
+            <div><dt>今日里程</dt><dd><b id="t-odo">0</b><small>m</small></dd></div>
+          </dl>
+          <div class="cmd">
+            <div class="cmd-head">
+              <span class="label">目前 API 指令</span>
+              <span class="cmd-state" id="cmd-state" data-state="PENDING">PENDING</span>
+            </div>
+            <code id="cmd-text">get_battery_info()</code>
           </div>
-          <code id="cmd-text">get_battery_info()</code>
-        </div>
-        <figure class="lidar">
-          <canvas id="lidar" aria-label="LiDAR 掃描俯視圖"></canvas>
-          <figcaption><span>2D LiDAR · 270° · 120 點</span><span>最近障礙 <b id="lidar-near">--</b> m</span></figcaption>
-        </figure>
-        <div class="detect">
-          <span class="label">物件偵測 get_object_detection</span>
-          <ul id="detect-list"><li class="muted">—</li></ul>
-        </div>
+          <figure class="lidar">
+            <canvas id="lidar" aria-label="LiDAR 掃描俯視圖"></canvas>
+            <figcaption><span>2D LiDAR · 270° · 120 點</span><span>最近障礙 <b id="lidar-near">--</b> m</span></figcaption>
+          </figure>
+          <div class="detect">
+            <span class="label">物件偵測 get_object_detection</span>
+            <ul id="detect-list"><li class="muted">—</li></ul>
+          </div>
+        </details>
         <div class="elev">
-          <div class="elev-head"><span class="label">電梯系統串接</span><span id="elev-state">1F · 門關閉</span></div>
+          <div class="elev-head"><span class="label">電梯系統串接・一次一台</span><span id="elev-state">1F · 門關閉</span></div>
           <ol class="elev-floors" id="elev-floors">
             <li data-floor="0">1F</li>
             <li data-floor="1">2F</li>
             <li data-floor="2">3F</li>
             <li data-floor="3">4F</li>
           </ol>
+          <ol class="elev-queue" id="elev-queue"><li class="muted">無排隊</li></ol>
         </div>
       </aside>
 
       <div class="stage-wrap">
         <main class="stage" id="stage">
-          <canvas id="scene" role="img" aria-label="長照機構 3D 場景：四層樓建築與外掛玻璃電梯，Kachaka 機器人在各樓層執行任務"></canvas>
+          <canvas id="scene" role="img" aria-label="長照機構 3D 場景：四層樓建築與外掛玻璃電梯，多台 Kachaka 機器人分工執行任務"></canvas>
           <div class="labels" id="labels" aria-hidden="true"></div>
           <div class="hud hud-top">
             <div class="floor-badge" id="floor-badge">
@@ -121,7 +135,8 @@
               <span><span id="hud-floor-name">服務大廳・醫務室</span><small id="hud-clock">07:58</small></span>
             </div>
             <div class="seg cam" role="group" aria-label="視角">
-              <button type="button" id="cam-auto" data-cam="auto" aria-pressed="true">跟隨</button>
+              <button type="button" id="cam-auto" data-cam="auto" aria-pressed="true">自動<span class="cam-long">導播</span></button>
+              <button type="button" id="cam-follow" data-cam="follow" aria-pressed="false">跟隨</button>
               <button type="button" id="cam-overview" data-cam="overview" aria-pressed="false">全景</button>
               <button type="button" id="cam-free" data-cam="free" aria-pressed="false">自由</button>
             </div>
@@ -129,15 +144,15 @@
           <div class="hud hud-now" id="hud-now">
             <span class="now-ic" id="now-ic"><svg><use href="#i-battery" /></svg></span>
             <div class="now-text">
-              <b id="now-title">準備出發</b>
-              <span id="now-detail">Kachaka 於 1F 充電座待命</span>
+              <b><span class="rchip" id="now-chip">K1</span><span id="now-title">準備出發</span></b>
+              <span id="now-detail">車隊於充電座待命</span>
             </div>
             <div class="now-metric" id="now-metric"></div>
             <div class="now-prog"><i id="now-prog"></i></div>
           </div>
-          <p class="hud-hint" id="hud-hint">拖曳旋轉・滾輪或雙指縮放</p>
+          <p class="hud-hint" id="hud-hint">拖曳旋轉・滾輪或雙指縮放・點選左側機器人可跟隨</p>
           <div class="stage-fallback" id="fallback" hidden>
-            <p>此裝置無法啟用 WebGL，3D 場景無法顯示；右側與下方數據仍會即時更新。</p>
+            <p>此裝置無法啟用 WebGL，3D 場景無法顯示；側欄與下方數據仍會即時更新。</p>
           </div>
         </main>
       </div>
@@ -147,7 +162,7 @@
           <h2 id="vitals-title"><svg><use href="#i-radar" /></svg>生理量測</h2>
           <span class="pill" id="vs-state" data-kind="idle">待命</span>
         </div>
-        <p class="sensor-sub">緯創醫學 BestShape VS · 毫米波雷達，床邊 1 公尺內非接觸量測</p>
+        <ul class="vs-units" id="vs-units" aria-label="各樓層量測車"></ul>
         <div class="patient">
           <div class="bed-chip"><b id="vs-bed">—</b><span id="vs-floor">--</span></div>
           <div class="who">
@@ -190,21 +205,48 @@
         </div>
       </aside>
 
-      <section class="panel p-timeline" aria-labelledby="tl-title">
-        <div class="panel-head">
-          <h2 id="tl-title">任務排程</h2>
-          <span class="hint">點選任務可直接切換情境</span>
-          <span class="pill" id="cycle" data-kind="idle">第 1 輪</span>
+      <section class="panel p-tasks" aria-labelledby="tasks-title">
+        <div class="panel-head tasks-head">
+          <h2 id="tasks-title"><svg><use href="#i-route" /></svg>任務佇列與派工</h2>
+          <button type="button" class="pill pill-btn" id="strategy-pill" aria-controls="drawer" title="開啟調度設定">綜合評分</button>
+          <div class="add-row" role="group" aria-label="新增任務（示範用）">
+            <button type="button" data-add="delivery">＋配送</button>
+            <button type="button" data-add="stat" data-tone="crit">＋緊急配送</button>
+            <button type="button" data-add="rounds">＋巡房</button>
+            <button type="button" data-add="patrol">＋巡視</button>
+            <button type="button" data-add="peak" title="同時新增 3 筆不同樓層的配送">電梯尖峰</button>
+            <button type="button" data-add="battery" title="把一台工作中的機器人電量降到強制回充門檻以下">低電量交接</button>
+          </div>
         </div>
-        <ol class="tasks" id="tasks"></ol>
+        <div class="kanban">
+          <section class="col" data-col="queue" aria-labelledby="col-queue-h">
+            <h3 id="col-queue-h">佇列<b id="n-queue">0</b></h3>
+            <ol id="col-queue"></ol>
+          </section>
+          <section class="col" data-col="active" aria-labelledby="col-active-h">
+            <h3 id="col-active-h">執行中<b id="n-active">0</b></h3>
+            <ol id="col-active"></ol>
+          </section>
+          <section class="col" data-col="done" aria-labelledby="col-done-h">
+            <h3 id="col-done-h">已完成<b id="n-done">0</b></h3>
+            <ol id="col-done"></ol>
+          </section>
+        </div>
       </section>
 
       <section class="panel p-log" aria-labelledby="log-title">
         <div class="panel-head">
           <h2 id="log-title">即時事件</h2>
+          <div class="seg log-filter" role="group" aria-label="事件篩選">
+            <button type="button" data-filter="all" aria-pressed="true">全部</button>
+            <button type="button" data-filter="dispatch" aria-pressed="false">派工</button>
+            <button type="button" data-filter="traffic" aria-pressed="false">交通</button>
+            <button type="button" data-filter="charge" aria-pressed="false">充電</button>
+            <button type="button" data-filter="care" aria-pressed="false">照護</button>
+          </div>
           <span class="live"><i></i>LIVE</span>
         </div>
-        <ol class="log" id="log"></ol>
+        <ol class="log" id="log" data-filter="all"></ol>
       </section>
 
       <footer class="credits">
@@ -212,6 +254,59 @@
         <span>本頁為概念模擬，住民、數據與機構皆為虛構，與 Preferred Robotics、緯創醫學、西格瑪機器人無官方關聯。</span>
       </footer>
     </div>
+
+    <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+    <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+      <header class="drawer-head">
+        <h2 id="drawer-title"><svg><use href="#i-sliders" /></svg>調度設定</h2>
+        <div class="seg" role="tablist" aria-label="設定或說明">
+          <button type="button" role="tab" id="tab-settings" data-tab="settings" aria-selected="true" aria-pressed="true">設定</button>
+          <button type="button" role="tab" id="tab-guide" data-tab="guide" aria-selected="false" aria-pressed="false">運作說明</button>
+        </div>
+        <button type="button" class="icon-btn" id="close-settings" aria-label="關閉設定"><svg><use href="#i-close" /></svg></button>
+      </header>
+      <div class="drawer-body">
+        <div class="settings-form" id="settings-form" data-panel="settings" role="tabpanel" aria-labelledby="tab-settings"></div>
+        <div class="guide" data-panel="guide" role="tabpanel" aria-labelledby="tab-guide" hidden>
+          <section>
+            <h3>1. 任務派發</h3>
+            <ol>
+              <li><b>進入佇列</b>：每筆任務有優先級——P1 緊急（醫囑緊急用藥）、P2 高（異常複測）、P3 一般（巡房、配送）、P4 例行（失智專區巡視）。佇列依「有效優先級 → 建立時間」排序。</li>
+              <li><b>優先級老化</b>：任務每等候 N 分鐘升一級（最多升到 P2，不會與真正的 P1 搶先），避免例行任務被無限延後。</li>
+              <li><b>確認資源</b>：巡房與複測需要該樓層的量測車（VS-3F／VS-4F），配送需要一個在藥局的藥品櫃（MED-01～03）；預設保留最後一櫃給 P1 緊急用藥。資源外出時任務等待，卡片會寫出原因。</li>
+              <li><b>篩選機器人</b>：閒置、未在低電量充電、電量 ≥「可派工最低電量」，而且預估做完任務並回到充電座後仍高於強制回充門檻 5% 以上。充電座上補電中的機器人也可以直接接單。</li>
+              <li><b>依策略挑選</b>：綜合評分／最近優先／樓層責任區／輪流指派（見設定頁說明）。每筆指派都會在任務卡片與事件中寫出理由與各機器人的分數。</li>
+              <li><b>合併派工</b>：異常複測若同樓層正有機器人在巡房，直接加到它的床位清單；同一樓層的配送在藥師備藥前可併成同一趟（每趟最多 3 份）。</li>
+              <li><b>P1 插單</b>：沒有空閒機器人時，若某台機器人快要歸還藥品櫃，就等它接手；否則中斷一台執行 P3／P4（巡房、巡視）的機器人——它在「安全點」（量完一床、走完一個巡檢點）歸還量測車後轉去執行 P1，被中斷的任務保留進度回到佇列，由任何機器人接手。</li>
+            </ol>
+          </section>
+          <section>
+            <h3>2. 交通管制</h3>
+            <ul>
+              <li><b>雙向車道、靠右行駛</b>：走廊分成東行（靠前側）與西行（靠房間側）兩條車道，同向跟車保持設定的中心距；遇到人員一律減速禮讓。</li>
+              <li><b>單一通行區</b>：住民房、藥局、機器人站、被服室、護理站取件點一次只允許一台機器人進出。機器人在自己的車道上、門前約 1 公尺處預約，佔用時就地等候、不擋門口；放行順序可選先到先過或優先級高者先。</li>
+              <li><b>不會互相卡死</b>：機器人必須先離開原本的區域、回到車道才會等下一個區域（不「佔著等」），因此不會形成循環等待；停在充電座上的機器人不佔用走道。</li>
+              <li><b>交會與讓行</b>：在車道上直行的機器人優先，橫越車道者等候；兩台互相擋住時由優先級高者先行。</li>
+              <li><b>電梯</b>：一次只載一台。機器人到電梯廳沿牆的等候點排隊，由電梯系統依「先到先服務／任務優先級／最近樓層」排程；等候超過 2 分鐘者優先，避免有樓層一直等不到。電梯會在機器人還在路上時先移到下一個要接的樓層。</li>
+            </ul>
+          </section>
+          <section>
+            <h3>3. 充電管理</h3>
+            <ul>
+              <li><b>四個充電座＋兩個待命點</b>：1F 機器人站 C1、C2，3F／4F 被服室各一（C3、C4），1F 大廳待命點 S1、S2。</li>
+              <li><b>何時充電</b>：閒置時低於「回充門檻」就去充電，並且充到「恢復派工」電量前不接新任務；工作中低於「強制回充」時，在安全點把任務交接出去再回充。</li>
+              <li><b>去哪充電</b>：「最近可用」挑行程（含電梯排隊）最短的空充電座；「固定歸屬」優先回自己的充電座，被佔用時才改去最近的。</li>
+              <li><b>充電座不夠時</b>：低電量的機器人先到待命點排隊；若有已充飽且閒置的機器人佔著充電座，它會讓出來。待命點上的機器人一有充電座空出就移過去補電。</li>
+              <li><b>示範加速</b>：為了在幾分鐘內看到充電與交接，電量變化預設加速 8 倍；可在設定中調整，或按「低電量交接」直接示範。</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+      <footer class="drawer-foot">
+        <button type="button" class="btn-ghost" id="reset-settings">恢復預設</button>
+        <button type="button" class="btn-primary" id="restart-sim">重新開始模擬</button>
+      </footer>
+    </aside>
 
     <script type="module" src="js/phase_3/main.js"></script>
   </body>

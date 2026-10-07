@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import { Batcher, addBox, addRBox, place, geo, std, textTexture, shadowMaterial, applyFade } from "./builders.js";
-import { FLOORS, FLOOR_GAP, PLATE, CORRIDOR, ROOM_CENTERS, WALL_LOW, WALL_HIGH, WALL_T } from "./config.js";
+import { FLOORS, FLOOR_GAP, PLATE, CORRIDOR, ROOM_CENTERS, WALL_LOW, WALL_HIGH, WALL_T, LANES } from "./config.js";
+import { fwd } from "./sim.js";
+
+const UTILITY_DOOR = -5.4; // front-left utility room door, offset from room 1's door so crossings never meet head-on
 
 // --- per-floor material set (each floor fades independently in the cut-away view) ---
 function floorMaterials(def) {
@@ -40,6 +43,10 @@ export class Hospital {
     this.locations = new Map();
     this.beds = new Map();
     this.staffSpots = {};
+    this.zones = new Map(); // zone id -> display name (one robot at a time)
+    this.docks = []; // chargers + parking spots
+    this.carts = {}; // floor index -> vital-sign cart home
+    this.medHomes = [];
     FLOORS.forEach((def, i) => this.floors.push(this.#buildFloor(i, def)));
   }
 
@@ -183,10 +190,36 @@ export class Hospital {
     f.group.add(m);
   }
 
-  #loc(f, id, name, x, z, yaw, via = []) {
-    const loc = { id: `${f.id}-${id}`, floor: f.index, name, x, z, yaw, via };
+  #loc(f, id, name, x, z, yaw, via = [], zone = null) {
+    const loc = { id: `${f.id}-${id}`, floor: f.index, name, x, z, yaw, via, zone };
     this.locations.set(loc.id, loc);
     return loc;
+  }
+
+  #zone(id, name) {
+    this.zones.set(id, name);
+    return id;
+  }
+
+  // charger or parking spot: the robot reverses onto (x, z) from an approach point in front of it
+  #dock(f, id, name, x, z, yaw, via, zone, charger, decal = null) {
+    const fw = fwd(yaw);
+    const approach = { id: `${f.id}-${id}-approach`, floor: f.index, name, x: x + fw.x * 0.7, z: z + fw.z * 0.7, yaw, via, zone };
+    const dock = { id, name, floor: f.index, x, z, yaw, charger, zone, approach, occupant: null, reservedBy: null };
+    this.docks.push(dock);
+    const b = f.batch;
+    if (charger) {
+      // charging base against the wall behind the parked robot, contacts facing it
+      const bx = x - fw.x * 0.41;
+      const bz = z - fw.z * 0.41;
+      addRBox(b, "dark", bx, 0, bz, 0.34, 0.16, 0.16, 0, 0.03);
+      const sz = bz + fw.z * 0.085;
+      addBox(b, "screen", bx - 0.1, bx + 0.1, 0.1, 0.13, sz - 0.005, sz + 0.005);
+    }
+    addBox(b, "accentSoft", x - 0.3, x + 0.3, 0.013, 0.017, z - 0.33, z + 0.33);
+    const [dx, dz] = decal || [x + fw.x * 1.2, z + fw.z * 1.2];
+    this.#floorDecal(f, id, dx, dz, 0.5);
+    return dock;
   }
 
   // ------------------------------------------------------------- furniture
@@ -347,7 +380,8 @@ export class Hospital {
     this.staffSpots[`${f.id}-staffA`] = { floor: f.index, x: -2.6, z: 2.8, yaw: Math.PI / 2 };
     this.staffSpots[`${f.id}-staffB`] = { floor: f.index, x: -1.2, z: 3.35, yaw: -Math.PI / 2 };
     this.staffSpots[`${f.id}-pickup`] = { floor: f.index, x: -0.2, z: 2.05, yaw: Math.PI / 2 };
-    this.#loc(f, "station", `${f.id} ${label}`, -0.2, 1.3, -Math.PI / 2, []);
+    const zone = this.#zone(`${f.id}-ST`, `${f.id} ${label}取件點`);
+    this.#loc(f, "station", `${f.id} ${label}`, -0.2, 1.3, -Math.PI / 2, [], zone);
   }
 
   // four residents' rooms on the back side, two care beds each
@@ -356,6 +390,7 @@ export class Hospital {
     const residents = RESIDENTS[f.id] || {};
     ROOM_CENTERS.forEach((cx, r) => {
       const room = `${n}0${r + 1}`;
+      const zone = this.#zone(`${f.id}-R${r}`, `${f.id} ${room} 房`);
       this.#floorDecal(f, room, cx, -0.55, 0.8);
       this.#headwall(f, cx);
       if (wheelchairs.includes(r)) this.#wheelchair(f, cx + 1.95, -2.35, Math.PI);
@@ -375,21 +410,27 @@ export class Hospital {
           z: bz,
           chest: { x: bx, y: 0.76, z: -4.28 },
           patient: data ? { ...data, bed: id } : null,
-          bedside: this.#loc(f, `${room}${side}-bedside`, `${id} 床邊`, cx + (s === 0 ? -0.12 : 0.12), -4.25, s === 0 ? Math.PI : 0, [[cx, CORRIDOR.minZ], [cx, -2.3]]),
+          bedside: this.#loc(f, `${room}${side}-bedside`, `${id} 床邊`, cx + (s === 0 ? -0.12 : 0.12), -4.25, s === 0 ? Math.PI : 0, [[cx, CORRIDOR.minZ], [cx, -2.3]], zone),
           nurseSpot: { x: bx, z: -2.48, yaw: Math.PI / 2 },
         });
       });
     });
   }
 
-  // utility room on the front-left, behind a wall with a door
-  #utility(f, label) {
-    this.#wallRun(f, "x", CORRIDOR.maxZ, PLATE.minX, -4.5, [[-6.75, 1.2]]);
+  // utility room on the front-left, behind a wall with a door; on care floors it also
+  // keeps the floor's vital-sign cart and a charger
+  #utility(f, label, equipped = false) {
+    const D = UTILITY_DOOR;
+    this.#wallRun(f, "x", CORRIDOR.maxZ, PLATE.minX, -4.5, [[D, 1.2]]);
     this.#wall(f, -4.5, CORRIDOR.maxZ, -4.5, PLATE.maxZ);
     this.#rack(f, -8.0, 4.55, 1.3, 0.5, 1.5, 0, 4, ["sheet", "boxA"]);
-    addRBox(f.batch, "frame", -6.0, 0, 3.6, 0.7, 0.95, 1.0, 0, 0.05);
-    this.#obstacle(f, -6.35, -5.65, 3.1, 4.1);
-    this.#floorDecal(f, label, -6.75, 1.75, 0.9);
+    this.#floorDecal(f, label, D - 1.35, 1.6, 0.9);
+    const zone = this.#zone(`${f.id}-U`, `${f.id} ${label}`);
+    if (!equipped) return;
+    const via = [[D, CORRIDOR.maxZ], [D, 1.85]];
+    this.#dock(f, f.index === 2 ? "C3" : "C4", `${f.id} 充電座`, -5.2, 4.45, Math.PI / 2, [...via, [-5.2, 3.0]], zone, true);
+    this.carts[f.index] = { floor: f.index, x: -7.4, z: 3.5, yaw: -Math.PI / 2, via: [...via, [-7.4, 2.2]], zone };
+    this.#floorDecal(f, `VS-${f.id}`, -7.4, 2.45, 0.62);
   }
 
   // ------------------------------------------------------------------ 1F
@@ -407,19 +448,38 @@ export class Hospital {
     this.#counter(f, -7.9, -6.6, -3.45, -2.95, 0.95);
     this.#monitor(f, -7.25, 0.95, -3.2, Math.PI / 2);
     this.staffSpots.pharmacist = { floor: 0, x: -7.25, z: -3.85, yaw: -Math.PI / 2 };
-    this.staffSpots.pharmacistLoad = { floor: 0, x: -5.3, z: -3.05, yaw: -Math.PI / 2 };
-    // robot station: charger + furniture homes
-    addRBox(b, "dark", -1.4, 0, -4.86, 0.34, 0.16, 0.16, 0, 0.03);
-    addBox(b, "screen", -1.5, -1.3, 0.1, 0.13, -4.78, -4.77);
-    addBox(b, "accentSoft", -4.3, -0.2, 0.013, 0.016, -4.98, -2.7);
-    this.#floorDecal(f, "VS-01", -3.3, -2.55, 0.62);
-    this.#floorDecal(f, "充電", -1.4, -3.9, 0.55);
-    this.charger = { floor: 0, x: -1.4, z: -4.45, yaw: -Math.PI / 2 };
-    this.#loc(f, "charger", "1F 充電座", -1.4, -3.75, -Math.PI / 2, [[c2, CORRIDOR.minZ], [c2, -2.4], [-1.4, -3.0]]);
-    this.shelfHomes = {
-      vs: { floor: 0, x: -3.3, z: -3.4, yaw: Math.PI / 2, via: [[c2, CORRIDOR.minZ], [c2, -1.9]] },
-      med: { floor: 0, x: -5.35, z: -2.25, yaw: 0, via: [[c1, CORRIDOR.minZ], [c1, -1.75]] },
-    };
+    // three medicine cabinets along the east wall; one is normally kept free for P1 orders
+    const pharmacy = this.#zone("1F-R0", "1F 藥局");
+    const door = [[c1, CORRIDOR.minZ], [c1, -1.6]];
+    const toCounter = [[-7.25, -3.85], [-6.35, -3.85]];
+    this.medHomes = [
+      {
+        id: "MED-01",
+        home: { floor: 0, x: -4.9, z: -1.85, yaw: 0, via: door, zone: pharmacy },
+        load: { x: -4.9, z: -2.35, yaw: -Math.PI / 2, path: [toCounter[1], [-6.2, -2.35], [-4.9, -2.35]] },
+      },
+      {
+        id: "MED-02",
+        home: { floor: 0, x: -4.9, z: -2.85, yaw: 0, via: [...door, [-6.2, -2.35]], zone: pharmacy },
+        load: { x: -4.9, z: -2.35, yaw: Math.PI / 2, path: [toCounter[1], [-6.2, -2.35], [-4.9, -2.35]] },
+      },
+      {
+        id: "MED-03",
+        home: { floor: 0, x: -4.9, z: -3.85, yaw: 0, via: [...door, [-6.2, -2.4], [-6.2, -3.35]], zone: pharmacy },
+        load: { x: -4.9, z: -3.35, yaw: Math.PI / 2, path: [toCounter[1], [-6.2, -3.35], [-4.9, -3.35]] },
+      },
+    ];
+    // robot station: two chargers along the back wall
+    this.#zone("1F-R1", "1F 機器人站");
+    this.#zone("1F-R2", "1F 醫務室");
+    this.#zone("1F-R3", "1F 復健室");
+    addBox(b, "accentSoft", -4.3, -0.2, 0.012, 0.0135, -4.98, -2.7);
+    const station = [[c2, CORRIDOR.minZ], [c2, -2.4]];
+    this.#dock(f, "C1", "1F 充電座 C1", -3.2, -4.45, -Math.PI / 2, [...station, [-3.2, -3.1]], "1F-R1", true);
+    this.#dock(f, "C2", "1F 充電座 C2", -1.3, -4.45, -Math.PI / 2, [...station, [-1.3, -3.1]], "1F-R1", true);
+    // standby spot in the lobby for a robot that finds every charger taken
+    this.#dock(f, "S1", "1F 大廳待命點 S1", 0.4, 2.0, Math.PI / 2, [[0.4, CORRIDOR.maxZ]], null, false, [0.4, 2.75]);
+    this.#dock(f, "S2", "1F 大廳待命點 S2", -0.75, 2.0, Math.PI / 2, [[-0.75, CORRIDOR.maxZ]], null, false, [-0.75, 2.75]);
     // clinic: desk, exam bed, cabinet
     this.#desk(f, c3 - 0.9, -4.3);
     this.#monitor(f, c3 - 0.9, 0.76, -4.45, Math.PI / 2);
@@ -477,7 +537,7 @@ export class Hospital {
   #floor2(f) {
     const b = f.batch;
     this.#residentRooms(f, [1]);
-    this.#utility(f, "沐浴間");
+    this.#utility(f, "沐浴間", false);
     this.#station(f, "照服站");
     // activity room, open to the corridor
     this.#table(f, 3.8, 3.0, 1.4, 0.8, [
@@ -500,11 +560,12 @@ export class Hospital {
     addBox(b, "dark", -8.95, -8.9, 1.05, 1.35, -1.42, -1.26);
     addBox(b, "screen", -8.9, -8.88, 1.22, 1.3, -1.38, -1.3);
     this.exitPoint = { x: -6.9, z: 0.65 };
+    // checkpoints sit on the eastbound lane, the direction the patrol runs
     this.patrol = [
-      this.#loc(f, "cp-201", "2F 201 室門口", ROOM_CENTERS[0], 0, Math.PI / 2),
-      this.#loc(f, "cp-202", "2F 202 室門口", ROOM_CENTERS[1], 0, Math.PI / 2),
-      this.#loc(f, "cp-activity", "2F 活動室", 5.2, 0, -Math.PI / 2),
-      this.#loc(f, "cp-east", "2F 東側走廊端", 8.1, 0, Math.PI),
+      this.#loc(f, "cp-201", "2F 201 室門口", ROOM_CENTERS[0], LANES.east, Math.PI / 2),
+      this.#loc(f, "cp-202", "2F 202 室門口", ROOM_CENTERS[1], LANES.east, Math.PI / 2),
+      this.#loc(f, "cp-activity", "2F 活動室", 5.2, LANES.east, -Math.PI / 2),
+      this.#loc(f, "cp-east", "2F 東側走廊端", 8.1, LANES.east, Math.PI),
     ];
   }
 
@@ -512,7 +573,7 @@ export class Hospital {
   #floorCare(f) {
     const b = f.batch;
     this.#residentRooms(f, f.index === 2 ? [0, 2] : [1]);
-    this.#utility(f, "被服室");
+    this.#utility(f, "被服室", true);
     this.#station(f, "護理站");
     this.#wallRun(f, "x", CORRIDOR.maxZ, 1.5, 5, [[3.25, 1.2]]);
     this.#wall(f, 1.5, CORRIDOR.maxZ, 1.5, PLATE.maxZ);

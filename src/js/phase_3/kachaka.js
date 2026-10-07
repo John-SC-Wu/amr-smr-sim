@@ -1,15 +1,17 @@
 import * as THREE from "three";
 import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { KACHAKA_MESHES } from "./kachakaMeshData.js";
-import { KACHAKA, FLOOR_GAP, FLOORS, ELEVATOR, CORRIDOR } from "./config.js";
-import { std, shadowMaterial } from "./builders.js";
+import { KACHAKA, FLOOR_GAP, FLOORS, ELEVATOR, CORRIDOR, LANES, BATTERY } from "./config.js";
+import { std, shadowMaterial, applyFade } from "./builders.js";
 import { emit, fwd, yawTo, wrapAngle, approach } from "./sim.js";
 
 const LINEAR_ACC = 0.45; // m/s^2
 const ANGULAR_ACC = 2.6; // rad/s^2
-const LANE = CORRIDOR.laneZ;
+const GATE_BACK = 1.0; // robots wait for a zone this far before its door, on their own lane
+const LOBBY_EDGE = -7.3; // gates never sit inside the elevator lobby
+const DOCK_BACK = 0.7; // reverse distance onto a charger / parking spot
 
-// --- decode the embedded STL-derived meshes (see kachakaMeshData.js) ---
+// --- decode the embedded STL-derived meshes once; every robot shares the geometry ---
 function b64ToBytes(b64) {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -32,16 +34,73 @@ function decodePart(part) {
   return toCreasedNormals(g, THREE.MathUtils.degToRad(32));
 }
 
+let SHARED = null;
+function shared() {
+  if (SHARED) return SHARED;
+  SHARED = {
+    body: decodePart(KACHAKA_MESHES.body),
+    leftTire: decodePart(KACHAKA_MESHES.leftTire),
+    rightTire: decodePart(KACHAKA_MESHES.rightTire),
+    solenoid: decodePart(KACHAKA_MESHES.solenoid),
+    bodyMat: std(0x383c3f, { roughness: 0.48, metalness: 0.12 }),
+    tireMat: std(0x26292b, { roughness: 0.9 }),
+    pinMat: std(0xb6bec2, { roughness: 0.3, metalness: 0.8 }),
+    led: new THREE.BoxGeometry(0.006, 0.012, 0.11),
+    flag: new THREE.BoxGeometry(0.004, 0.05, 0.16),
+    shadow: new THREE.PlaneGeometry(0.72, 0.5).rotateX(-Math.PI / 2),
+    ring: new THREE.RingGeometry(0.36, 0.4, 48).rotateX(-Math.PI / 2),
+    goal: new THREE.RingGeometry(0.16, 0.22, 40).rotateX(-Math.PI / 2),
+  };
+  return SHARED;
+}
+
+// merge hooks of waypoints that collapse onto each other
+function cleanPath(pts, x0, z0) {
+  const out = [];
+  let px = x0;
+  let pz = z0;
+  for (const p of pts) {
+    const near = Math.hypot(p.x - px, p.z - pz) < 0.04;
+    if (near && out.length) {
+      const q = out[out.length - 1];
+      if (p.pass) {
+        const a = q.pass;
+        const b = p.pass;
+        q.pass = a ? () => (a(), b()) : b;
+      }
+      if (p.gate) {
+        q.gate = p.gate;
+        q.gateZone = p.gateZone;
+      }
+      q.safe = q.safe || p.safe;
+      continue;
+    }
+    if (near && !p.pass && !p.gate && !p.safe) continue;
+    out.push(p);
+    px = p.x;
+    pz = p.z;
+  }
+  return out;
+}
+
 export class Kachaka {
-  constructor({ sim, elevator }) {
+  constructor({ def, index, sim, elevator, lift, traffic, settings }) {
+    this.def = def;
+    this.id = def.id;
+    this.index = index;
+    this.color = def.color;
+    this.name = `Kachaka ${def.id}`;
+    this.serial = def.serial;
     this.sim = sim;
     this.elevator = elevator;
-    this.name = "Kachaka Pro";
-    this.serial = "KCK-PRO-0427";
+    this.lift = lift;
+    this.traffic = traffic;
+    this.settings = settings;
+
     this.floor = 0;
-    this.x = -1.4;
-    this.z = -4.45;
-    this.yaw = -Math.PI / 2;
+    this.x = 0;
+    this.z = 0;
+    this.yaw = 0;
     this.y = 0;
     this.v = 0;
     this.w = 0;
@@ -52,32 +111,57 @@ export class Kachaka {
     this.rotateTarget = 0;
     this.forwardRemaining = 0;
     this.forwardSpeed = 0.2;
+    this.abortFn = null;
+    this.aborted = false;
     this.shelf = null;
     this.pin = 0;
-    this.battery = 86;
-    this.onCharger = true;
-    this.odometer = 412;
+    this.battery = def.battery;
+    this.onCharger = false;
+    this.odometer = 0;
     this.inElevator = false;
     this.rideTarget = null;
+    this.ticket = null;
     this.mutedSensors = false;
     this.lastLoc = null;
-    this.exitVia = [[-1.4, -3.0], [-2.25, -2.4], [-2.25, CORRIDOR.minZ]];
-    this.activity = { kind: "charge", label: "充電中", detail: "1F 充電座" };
+
+    // where the robot is in the building's zone system
+    this.insideZone = null;
+    this.zoneVia = [];
+    this.zoneViaPassed = 0;
+    this.parked = null; // dock it is standing on
+    this.homeDock = null;
+
+    // fleet bookkeeping (owned by Fleet)
+    this.task = null;
+    this.assignment = null;
+    this.preemptFor = null;
+    this.needCharge = false;
+    this.vacate = false;
+
+    this.activity = { kind: "charge", label: "充電中", detail: "" };
     this.command = { name: "get_battery_info", args: "", state: "PENDING" };
     this.hold = false; // pause the current route (e.g. to talk to someone) without cancelling it
-    this.blocked = false;
-    this.blockedSince = 0;
+    this.waitInfo = null; // waiting for a zone / the elevator / a charger
+    this.yieldInfo = null; // slowing for a person or another robot
+    this.blockedBy = null;
+    this.blockedRobot = null;
+    this.blockedRobotSince = 0;
+    this.blockedPerson = false;
     this.lastYieldSpeech = -99;
+    this.lastFollowLog = -99;
     this.detections = [];
-    this.scanTimer = 0;
+    this.scanTimer = Math.random() / 15;
     this.people = [];
-    this.obstacleFn = () => [];
+    this.others = [];
+    this.obstacleFn = null;
+    this.focusPerson = null;
+    this.detailed = false;
 
     const rays = KACHAKA.lidar.rays;
-    this.scan = { ranges: new Float32Array(rays).fill(KACHAKA.lidar.range), nearest: KACHAKA.lidar.range, ox: 0, oz: 0, yaw: 0 };
+    this.scan = { ranges: new Float32Array(rays).fill(KACHAKA.lidar.range), nearest: KACHAKA.lidar.range };
 
     this.group = new THREE.Group();
-    this.group.name = "kachaka";
+    this.group.name = `kachaka-${this.id}`;
     this.#buildModel();
     this.#buildOverlays();
     this.#sync();
@@ -85,16 +169,17 @@ export class Kachaka {
 
   // ------------------------------------------------------------- visuals
   #buildModel() {
-    const bodyMat = std(0x383c3f, { roughness: 0.48, metalness: 0.12 });
-    const tireMat = std(0x26292b, { roughness: 0.9 });
-    const pinMat = std(0xb6bec2, { roughness: 0.3, metalness: 0.8 });
-    this.body = new THREE.Mesh(decodePart(KACHAKA_MESHES.body), bodyMat);
-    this.group.add(this.body);
-
+    const S = shared();
+    // geometry is shared; materials are per robot so each one fades with its own floor
+    const bodyMat = S.bodyMat.clone();
+    const tireMat = S.tireMat.clone();
+    const pinMat = S.pinMat.clone();
+    this.materials = [bodyMat, tireMat, pinMat];
+    this.group.add(new THREE.Mesh(S.body, bodyMat));
     // wheel joints: base_[l|r]_drive_wheel_joint at (0, +/-0.100, 0.045) in ROS -> three (0, 0.045, -/+0.100)
     this.wheels = [
-      { mesh: new THREE.Mesh(decodePart(KACHAKA_MESHES.leftTire), tireMat), z: -0.1 },
-      { mesh: new THREE.Mesh(decodePart(KACHAKA_MESHES.rightTire), tireMat), z: 0.1 },
+      { mesh: new THREE.Mesh(S.leftTire, tireMat), z: -0.1 },
+      { mesh: new THREE.Mesh(S.rightTire, tireMat), z: 0.1 },
     ];
     for (const wh of this.wheels) {
       wh.pivot = new THREE.Group();
@@ -102,30 +187,45 @@ export class Kachaka {
       wh.pivot.add(wh.mesh);
       this.group.add(wh.pivot);
     }
-    this.solenoid = new THREE.Mesh(decodePart(KACHAKA_MESHES.solenoid), pinMat);
+    this.solenoid = new THREE.Mesh(S.solenoid, pinMat);
     this.solenoid.position.y = 0.074;
     this.group.add(this.solenoid);
 
     // status light strip on the front face
     this.ledMat = new THREE.MeshBasicMaterial({ color: 0x4ee08b });
-    const led = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.012, 0.11), this.ledMat);
+    const led = new THREE.Mesh(S.led, this.ledMat);
     led.position.set(0.237, 0.088, 0);
     this.group.add(led);
+    // fleet colour tag on the back, so robots can be told apart from any side
+    const tag = new THREE.Mesh(S.flag, new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color) }));
+    tag.position.set(-0.152, 0.085, 0);
+    this.group.add(tag);
 
-    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.5).rotateX(-Math.PI / 2), shadowMaterial(0.42));
+    const shadow = new THREE.Mesh(S.shadow, shadowMaterial(0.42));
     shadow.position.set(0.045, 0.006, 0);
     this.group.add(shadow);
 
-    // locator ring so the robot stays easy to find from far away
-    this.ringMat = new THREE.MeshBasicMaterial({ color: 0x2bd4b8, transparent: true, opacity: 0.55, depthWrite: false });
-    this.ring = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.4, 48).rotateX(-Math.PI / 2), this.ringMat);
+    // locator ring in the robot's fleet colour
+    this.ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color), transparent: true, opacity: 0.6, depthWrite: false });
+    this.ring = new THREE.Mesh(S.ring, this.ringMat);
     this.ring.position.set(0.045, 0.012, 0);
     this.group.add(this.ring);
+    this.materials.push(this.ledMat, tag.material, shadow.material, this.ringMat);
+    this.fade = 1;
+  }
+
+  // cut-away view: a robot on a faded floor fades with it (its label stays, dimmed)
+  setFade(alpha) {
+    if (this.fade === alpha) return;
+    this.fade = alpha;
+    applyFade(this.materials, alpha);
+    this.group.visible = alpha > 0.02;
+    this.overlays.visible = alpha > 0.5;
   }
 
   #buildOverlays() {
     const n = KACHAKA.lidar.rays;
-    // LiDAR hit points
+    // LiDAR hit points (drawn for the robot being inspected)
     this.scanGeo = new THREE.BufferGeometry();
     this.scanGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3));
     this.scanPoints = new THREE.Points(
@@ -133,7 +233,6 @@ export class Kachaka {
       new THREE.PointsMaterial({ color: 0xff4d4d, size: 0.055, sizeAttenuation: true, depthWrite: false, transparent: true, opacity: 0.95 }),
     );
     this.scanPoints.frustumCulled = false;
-    // free-space fan
     this.fanGeo = new THREE.BufferGeometry();
     this.fanGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array((n + 1) * 3), 3));
     const idx = [];
@@ -144,13 +243,14 @@ export class Kachaka {
       new THREE.MeshBasicMaterial({ color: 0xff6b5b, transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide }),
     );
     this.scanFan.frustumCulled = false;
+    this.scanPoints.visible = this.scanFan.visible = false;
 
-    // planned path ribbon with flowing dashes
+    // planned path ribbon with flowing dashes, in the robot's colour
     const c = document.createElement("canvas");
     c.width = 64;
     c.height = 8;
     const g = c.getContext("2d");
-    g.fillStyle = "rgba(43,212,184,1)";
+    g.fillStyle = "#ffffff";
     g.fillRect(0, 0, 36, 8);
     this.dashTex = new THREE.CanvasTexture(c);
     this.dashTex.wrapS = THREE.RepeatWrapping;
@@ -162,47 +262,30 @@ export class Kachaka {
     for (let i = 0; i < maxSeg; i++) pIdx.push(4 * i, 4 * i + 1, 4 * i + 2, 4 * i + 1, 4 * i + 3, 4 * i + 2);
     this.pathGeo.setIndex(pIdx);
     this.pathMaxSeg = maxSeg;
+    const col = new THREE.Color(this.color);
     this.pathMesh = new THREE.Mesh(
       this.pathGeo,
-      new THREE.MeshBasicMaterial({ map: this.dashTex, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ map: this.dashTex, color: col, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }),
     );
     this.pathMesh.frustumCulled = false;
-    this.goalMarker = new THREE.Mesh(
-      new THREE.RingGeometry(0.16, 0.22, 40).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0x2bd4b8, transparent: true, opacity: 0.85, depthWrite: false }),
-    );
+    this.goalMarker = new THREE.Mesh(shared().goal, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.85, depthWrite: false }));
     this.goalMarker.visible = false;
     this.overlays = new THREE.Group();
     this.overlays.add(this.scanPoints, this.scanFan, this.pathMesh, this.goalMarker);
   }
 
   // ---------------------------------------------------------- state/UI
-  setActivity(kind, label, detail = "") {
-    this.activity = { kind, label, detail };
-    emit("activity", this.activity);
+  get priority() {
+    if (this.task) return this.task.priority;
+    return this.needCharge ? 3 : 5;
   }
 
-  startCommand(name, args = "", log = true) {
-    this.command = { name, args, state: "RUNNING" };
-    emit("command", this.command);
-    if (log) emit("log", { tag: "api", html: `<code>${name}(${args})</code>` });
+  get halfWidth() {
+    return this.shelf ? 0.21 : 0.12;
   }
 
-  endCommand() {
-    this.command = { ...this.command, state: "PENDING" };
-    emit("command", this.command);
-  }
-
-  say(text) {
-    emit("speech", { who: "robot", name: "Kachaka", text });
-  }
-
-  async speak(text, token) {
-    this.startCommand("speak", `"${text}"`, false);
-    emit("log", { tag: "api", html: `<code>speak</code> 「${text}」` });
-    this.say(text);
-    await this.sim.wait(Math.max(2.2, text.length * 0.16), token);
-    this.endCommand();
+  get radius() {
+    return this.shelf ? 0.27 : 0.22;
   }
 
   get mapId() {
@@ -213,15 +296,44 @@ export class Kachaka {
     return this.shelf ? KACHAKA.shelfLinear : KACHAKA.maxLinear;
   }
 
+  setActivity(kind, label, detail = "") {
+    this.activity = { kind, label, detail };
+    emit("activity", { robot: this });
+  }
+
+  startCommand(name, args = "", log = true) {
+    this.command = { name, args, state: "RUNNING" };
+    if (log) emit("log", { tag: "api", robot: this, html: `<code>${name}(${args})</code>` });
+  }
+
+  endCommand() {
+    this.command = { ...this.command, state: "PENDING" };
+  }
+
+  say(text) {
+    emit("speech", { who: `robot-${this.id}`, robot: this, name: this.id, text });
+  }
+
+  async speak(text, token) {
+    this.startCommand("speak", `"${text}"`, false);
+    emit("log", { tag: "api", robot: this, html: `<code>speak</code> 「${text}」` });
+    this.say(text);
+    await this.sim.wait(Math.max(2.2, text.length * 0.16), token);
+    this.endCommand();
+  }
+
   // ------------------------------------------------------- motion API
-  moveAlong(points, finalYaw, token) {
-    this.path = points.map(([x, z]) => ({ x, z }));
+  // points: [[x, z]] or {x, z, gate?, gateZone?, pass?, safe?}; resolves true on arrival, false if aborted
+  moveAlong(points, finalYaw, token, abort = null) {
+    this.path = points.map((p) => (Array.isArray(p) ? { x: p[0], z: p[1] } : p));
     this.pathIndex = 0;
     this.finalYaw = finalYaw;
+    this.abortFn = abort;
+    this.aborted = false;
     this.mode = this.path.length ? "path" : finalYaw !== null && finalYaw !== undefined ? "rotate" : "idle";
     if (this.mode === "rotate") this.rotateTarget = finalYaw;
     this.#updatePathMesh(true);
-    return this.sim.until(() => this.mode === "idle", token);
+    return this.sim.until(() => this.mode === "idle", token).then(() => !this.aborted);
   }
 
   rotateTo(yaw, token) {
@@ -245,60 +357,113 @@ export class Kachaka {
     });
   }
 
-  // route on the current floor: leave the current room, run the corridor lane, enter the target
-  route(loc) {
-    const pts = [];
-    const same = this.lastLoc && this.lastLoc.floor === loc.floor && loc.via.length > 0 && JSON.stringify(loc.via) === JSON.stringify(this.lastLoc.via);
-    const door = this.exitVia.length ? this.exitVia[this.exitVia.length - 1] : null;
-    const sameDoor = !same && door && loc.via.length > 0 && loc.via[0][0] === door[0] && loc.via[0][1] === door[1];
-    if (sameDoor) {
-      // both places are behind the same door: stay inside the room
-      for (const p of this.exitVia.slice(0, -1)) pts.push(p);
-      for (const p of loc.via.slice(1)) pts.push(p);
-    } else if (!same) {
-      for (const p of this.exitVia) pts.push(p);
-      const start = pts.length ? pts[pts.length - 1] : [this.x, this.z];
-      const entry = loc.via.length ? loc.via[0] : [loc.x, loc.z];
-      pts.push([start[0], LANE], [entry[0], LANE]);
-      for (const p of loc.via) pts.push(p);
-    }
-    pts.push([loc.x, loc.z]);
-    // drop duplicates and points we are already standing on
-    const out = [];
-    let px = this.x;
-    let pz = this.z;
-    for (const p of pts) {
-      if (Math.hypot(p[0] - px, p[1] - pz) > 0.04) {
-        out.push(p);
-        px = p[0];
-        pz = p[1];
-      }
-    }
-    return out;
+  // ------------------------------------------------------- routing
+  #exitPath() {
+    return this.zoneVia.slice(0, this.zoneViaPassed).reverse();
   }
 
-  async goTo(loc, token, { label } = {}) {
-    if (loc.floor !== this.floor) await this.rideElevator(loc.floor, token);
-    const name = label || loc.name;
-    this.startCommand("move_to_location", `target_location_id="${loc.id}"`);
-    emit("nav", { floor: loc.floor, x: loc.x, z: loc.z, name });
-    await this.moveAlong(this.route(loc), loc.yaw, token);
-    this.#arrive(loc);
-    this.endCommand();
+  // back on a corridor lane: hand the room we came from to the next robot
+  #leaveZone(id) {
+    this.traffic.release(id, this);
+    if (this.insideZone !== id) return;
+    this.insideZone = null;
+    this.zoneVia = [];
+    this.zoneViaPassed = 0;
+  }
+
+  #tryEnter(loc) {
+    if (!this.traffic.tryAcquire(loc.zone, this)) return false;
+    this.insideZone = loc.zone;
+    this.zoneVia = loc.via;
+    this.zoneViaPassed = 0;
+    return true;
+  }
+
+  // one floor: leave the current zone, join the lane for the travel direction (keep right),
+  // wait for the target zone at a gate short of its door, then drive in
+  #plan(loc) {
+    const pts = [];
+    const P = (x, z, o = {}) => pts.push({ x, z, ...o });
+    const cur = this.insideZone;
+    if (cur && loc.zone === cur) {
+      const exit = this.#exitPath();
+      for (const p of exit.slice(0, -1)) P(p[0], p[1]);
+      for (const p of loc.via.slice(1)) P(p[0], p[1]);
+      P(loc.x, loc.z);
+      this.zoneVia = loc.via;
+      this.zoneViaPassed = loc.via.length;
+      return cleanPath(pts, this.x, this.z);
+    }
+    let sx = this.x;
+    if (cur) {
+      const exit = this.#exitPath();
+      for (const p of exit) P(p[0], p[1]);
+      if (exit.length) sx = exit[exit.length - 1][0];
+    }
+    const entry = loc.via.length ? loc.via[0] : [loc.x, loc.z];
+    const east = entry[0] >= sx - 0.01;
+    const laneZ = east ? LANES.east : LANES.west;
+    const dir = east ? 1 : -1;
+    const join = { x: sx, z: laneZ, safe: true };
+    if (cur) join.pass = () => this.#leaveZone(cur);
+    pts.push(join);
+    if (loc.zone) {
+      const gate = () => this.#tryEnter(loc);
+      let wx = entry[0] - dir * GATE_BACK;
+      if (east) wx = Math.max(wx, LOBBY_EDGE);
+      const behind = east ? wx <= sx + 0.05 : wx >= sx - 0.05;
+      if (behind) {
+        join.gate = gate;
+        join.gateZone = loc.zone;
+      } else P(wx, laneZ, { safe: true, gate, gateZone: loc.zone });
+    }
+    P(entry[0], laneZ);
+    loc.via.forEach((p, i) => P(p[0], p[1], loc.zone ? { pass: () => (this.zoneViaPassed = i + 1) } : {}));
+    P(loc.x, loc.z);
+    return cleanPath(pts, this.x, this.z);
   }
 
   #arrive(loc) {
     this.lastLoc = loc;
-    this.exitVia = [...loc.via].reverse();
+    if (loc.zone) {
+      this.insideZone = loc.zone;
+      this.zoneVia = loc.via;
+      this.zoneViaPassed = loc.via.length;
+    }
   }
 
-  async departFromCharger(token) {
-    if (!this.onCharger) return;
-    this.startCommand("depart_from_charger");
-    this.onCharger = false;
-    await this.moveForward(0.7, 0.15, token);
-    this.lastLoc = null;
+  async goTo(loc, token, { label, abort = null, api = null } = {}) {
+    if (loc.floor !== this.floor) {
+      const ok = await this.rideElevator(loc.floor, token, abort);
+      if (!ok) return false;
+    }
+    const name = label || loc.name;
+    if (api) this.startCommand(api[0], api[1]);
+    else this.startCommand("move_to_location", `target_location_id="${loc.id}"`, false);
+    emit("nav", { robot: this, floor: loc.floor, x: loc.x, z: loc.z, name });
+    const arrived = await this.moveAlong(this.#plan(loc), loc.yaw, token, abort);
+    if (arrived) this.#arrive(loc);
     this.endCommand();
+    return arrived;
+  }
+
+  #abortPath() {
+    // a zone taken early (look-ahead) but not entered yet is handed back
+    for (let i = this.pathIndex; i < this.path.length; i++) {
+      const p = this.path[i];
+      if (p.gate && p.open && this.insideZone === p.gateZone && this.zoneViaPassed === 0) {
+        this.traffic.release(p.gateZone, this);
+        this.insideZone = null;
+        this.zoneVia = [];
+      }
+    }
+    this.traffic.cancelWaits(this);
+    this.path = [];
+    this.finalYaw = null;
+    this.aborted = true;
+    this.mode = "idle";
+    this.waitInfo = null;
+    this.#updatePathMesh(true);
   }
 
   // shelf approach pose: robot stands dockDepth in front of the shelf, facing it
@@ -311,7 +476,8 @@ export class Kachaka {
       x: home.x - f.x * KACHAKA.dockDepth,
       z: home.z - f.z * KACHAKA.dockDepth,
       yaw: home.yaw,
-      via: home.via,
+      via: home.via || [],
+      zone: home.zone || null,
     };
   }
 
@@ -327,14 +493,14 @@ export class Kachaka {
     this.shelf = shelf;
     shelf.dockTo(this);
     await this.sim.wait(1.2, token);
-    emit("log", { tag: "api", html: `已對接 <b>${shelf.name}</b>（docking pin 上升 12 mm）` });
+    emit("log", { tag: "api", robot: this, html: `已對接 <b>${shelf.name}</b>（docking pin 上升 12 mm）` });
     this.endCommand();
   }
 
   async undockShelf(token, backOut = true) {
     if (!this.shelf) return;
     const shelf = this.shelf;
-    this.startCommand("undock_shelf", `target_shelf_id="${shelf.id}"`);
+    this.startCommand("undock_shelf", `target_shelf_id="${shelf.id}"`, false);
     shelf.release(this.floor, this.x, this.z, this.yaw);
     this.shelf = null;
     await this.sim.wait(1.0, token);
@@ -343,78 +509,117 @@ export class Kachaka {
   }
 
   async returnShelf(shelf, token) {
-    const home = shelf.home;
-    const appr = this.shelfApproach(home);
+    const appr = this.shelfApproach(shelf.home);
     this.setActivity("move", "歸還家具", shelf.name);
-    this.startCommand("return_shelf", `target_shelf_id="${shelf.id}"`);
-    if (this.floor !== home.floor) await this.rideElevator(home.floor, token);
-    this.startCommand("return_shelf", `target_shelf_id="${shelf.id}"`, false);
-    await this.moveAlong(this.route(appr), appr.yaw, token);
-    this.#arrive(appr);
+    await this.goTo(appr, token, { label: shelf.name, api: ["return_shelf", `target_shelf_id="${shelf.id}"`] });
+    await this.rotateTo(appr.yaw, token);
     await this.moveForward(KACHAKA.dockDepth, 0.1, token, true);
     await this.undockShelf(token, true);
-    emit("log", { tag: "api", html: `<b>${shelf.name}</b> 已歸位` });
+    emit("log", { tag: "api", robot: this, html: `<b>${shelf.name}</b> 已歸位` });
+  }
+
+  // --- docks: chargers and parking spots ---
+  placeAt(dock) {
+    this.teleport(dock.floor, dock.x, dock.z, dock.yaw, { onCharger: dock.charger });
+    this.parked = dock;
+    this.insideZone = dock.zone;
+    this.zoneVia = dock.approach.via;
+    this.zoneViaPassed = dock.approach.via.length;
+  }
+
+  // drive to the dock and reverse onto it; false if aborted on the way (only at corridor safe points)
+  async parkAt(dock, token, abort = null) {
+    const api = dock.charger ? ["return_home", ""] : null;
+    const ok = await this.goTo(dock.approach, token, { label: dock.name, abort, api });
+    if (!ok) return false;
+    this.startCommand(dock.charger ? "return_home" : "move_forward", dock.charger ? "" : `distance_meter=-${DOCK_BACK}`, false);
+    await this.rotateTo(dock.yaw, token);
+    await this.moveForward(-DOCK_BACK, 0.12, token, true);
+    this.parked = dock;
+    this.onCharger = dock.charger;
+    // a parked robot leaves the zone's aisle free for others
+    if (dock.zone) this.traffic.release(dock.zone, this);
+    this.endCommand();
+    return true;
+  }
+
+  async unpark(token) {
+    const dock = this.parked;
+    if (!dock) return;
+    if (dock.zone && !this.traffic.tryAcquire(dock.zone, this)) {
+      this.waitInfo = { kind: "zone", label: `等待 ${this.traffic.name(dock.zone)} 淨空` };
+      await this.traffic.acquire(dock.zone, this, token);
+      this.waitInfo = null;
+    }
+    if (dock.zone) {
+      this.insideZone = dock.zone;
+      this.zoneVia = dock.approach.via;
+      this.zoneViaPassed = dock.approach.via.length;
+    }
+    this.startCommand(dock.charger ? "depart_from_charger" : "move_forward", dock.charger ? "" : `distance_meter=${DOCK_BACK}`, dock.charger);
+    this.onCharger = false;
+    await this.moveForward(DOCK_BACK, 0.15, token);
+    this.parked = null;
     this.endCommand();
   }
 
-  async returnHome(chargerLoc, charger, token) {
-    this.setActivity("move", "返回充電座", "1F 機器人站");
-    this.startCommand("return_home");
-    if (this.floor !== chargerLoc.floor) await this.rideElevator(chargerLoc.floor, token);
-    this.startCommand("return_home", "", false);
-    await this.moveAlong(this.route(chargerLoc), chargerLoc.yaw, token);
-    this.#arrive(chargerLoc);
-    await this.moveForward(-Math.hypot(chargerLoc.x - charger.x, chargerLoc.z - charger.z), 0.12, token, true);
-    this.onCharger = true;
-    this.setActivity("charge", "充電中", "1F 充電座");
-    this.endCommand();
-  }
-
-  // --- cross-floor travel: call the elevator through the building integration, switch maps on arrival ---
-  async rideElevator(target, token) {
-    const el = this.elevator;
+  // --- cross-floor travel: queue through the elevator system, switch maps on arrival ---
+  async rideElevator(target, token, abort = null) {
+    const lift = this.lift;
     const from = this.floor;
     const fromId = FLOORS[from].id;
     const toId = FLOORS[target].id;
-    const landing = { id: `${fromId}-elevator`, floor: from, name: `${fromId} 電梯廳`, x: ELEVATOR.landingX, z: 0, yaw: Math.PI, via: [] };
     const before = this.activity;
-    this.rideTarget = target;
-    this.setActivity("move", "前往電梯", `${fromId} → ${toId}`);
-    emit("log", { tag: "nav", html: `跨樓層路徑 ${fromId} → 電梯 → ${toId}` });
-    this.startCommand("move_to_location", `target_location_id="${landing.id}"`);
-    await this.moveAlong(this.route(landing), Math.PI, token);
-    this.#arrive(landing);
+    const ticket = lift.request(this, from, target);
+    this.ticket = ticket;
+    try {
+      this.setActivity("move", before.kind === "charge" || before.kind === "idle" ? "前往電梯" : before.label, `${fromId} → ${toId}`);
+      const spot = lift.spotLoc(from, ticket.spot);
+      const ok = await this.goTo(spot, token, { label: spot.name, abort });
+      if (!ok) return false;
+      lift.markReady(ticket);
+      this.setActivity("lift", "電梯排隊", `${fromId} → ${toId}`);
+      this.waitInfo = { kind: "lift", label: "電梯排隊" };
+      await this.sim.until(() => ticket.called || (abort && abort()), token);
+      this.waitInfo = null;
+      if (!ticket.called) return false;
 
-    this.setActivity("lift", "等待電梯", `呼叫至 ${fromId}`);
-    this.startCommand("elevator.call", `floor="${fromId}"`, false);
-    emit("log", { tag: "lift", html: `電梯系統串接：呼叫至 <b>${fromId}</b>` });
-    await el.callTo(from, this.sim, token);
-    this.say("機器人進入電梯，請稍候。");
-    this.setActivity("lift", "進入電梯", `${fromId} → ${toId}`);
-    this.startCommand("move_forward", `distance_meter=${(ELEVATOR.landingX - ELEVATOR.shaftX).toFixed(2)}, mute_sensors=True`);
-    await this.moveForward(ELEVATOR.landingX - ELEVATOR.shaftX, 0.2, token, true);
-    this.inElevator = true;
-    el.occupied = true;
-    await this.rotateInPlace(Math.PI, token);
+      this.setActivity("lift", "進入電梯", `${fromId} → ${toId}`);
+      // spots further back cross the westbound lane: wait for robots heading down it
+      if (ticket.spot > 0) await this.sim.until(() => this.#laneClear(lift.spotLoc(from, ticket.spot).x), token);
+      this.say("機器人進入電梯，請稍候。");
+      await this.moveAlong(lift.boardingPath(ticket.spot), Math.PI, token);
+      this.startCommand("move_forward", `distance_meter=${(ELEVATOR.landingX - ELEVATOR.shaftX).toFixed(2)}, mute_sensors=True`, false);
+      await this.moveForward(ELEVATOR.landingX - ELEVATOR.shaftX, 0.2, token, true);
+      this.inElevator = true;
+      this.rideTarget = target;
+      await this.rotateInPlace(Math.PI, token);
+      ticket.boarded = true;
+      lift.bump();
 
-    this.setActivity("lift", "搭乘電梯", `${fromId} → ${toId}`);
-    emit("log", { tag: "lift", html: `電梯門關閉，前往 <b>${toId}</b>` });
-    await el.travel(target, this.sim, token);
-    this.floor = target;
-    this.startCommand("switch_map", `map_id="${FLOORS[target].map}", inherit_docking_state_and_docked_shelf=True`);
-    await this.sim.wait(1.4, token);
-    emit("log", { tag: "lift", html: `抵達 <b>${toId}</b>，切換樓層地圖 <code>${FLOORS[target].map}</code>` });
-    this.startCommand("move_forward", `distance_meter=${(ELEVATOR.landingX - ELEVATOR.shaftX).toFixed(2)}, mute_sensors=True`);
-    await this.moveForward(ELEVATOR.landingX - ELEVATOR.shaftX, 0.2, token, true);
-    this.inElevator = false;
-    el.occupied = false;
-    el.closeDoors(target, this.sim, token).catch(() => {});
-    this.lastLoc = null;
-    this.exitVia = [];
-    this.endCommand();
-    this.rideTarget = null;
-    this.setActivity(before.kind, before.label, before.detail);
-    emit("ride", { from, to: target });
+      this.setActivity("lift", "搭乘電梯", `${fromId} → ${toId}`);
+      await this.sim.until(() => ticket.arrived, token);
+      this.floor = target;
+      this.startCommand("switch_map", `map_id="${FLOORS[target].map}", inherit_docking_state_and_docked_shelf=True`, false);
+      emit("log", { tag: "lift", robot: this, html: `抵達 <b>${toId}</b>，<code>switch_map("${FLOORS[target].map}")</code>` });
+      await this.sim.wait(1.4, token);
+      this.startCommand("move_forward", `distance_meter=${(ELEVATOR.landingX - ELEVATOR.shaftX).toFixed(2)}, mute_sensors=True`, false);
+      await this.moveForward(ELEVATOR.landingX - ELEVATOR.shaftX, 0.2, token, true);
+      this.inElevator = false;
+      this.rideTarget = null;
+      // clear the landing onto the eastbound lane before the next robot is called
+      await this.moveAlong([[ELEVATOR.landingX + 0.75, LANES.east]], null, token);
+      ticket.done = true;
+      lift.bump();
+      this.endCommand();
+      this.lastLoc = null;
+      this.setActivity(before.kind, before.label, before.detail);
+      return true;
+    } finally {
+      this.waitInfo = null;
+      this.ticket = null;
+      if (!ticket.boarded) lift.cancel(ticket);
+    }
   }
 
   // ------------------------------------------------------------ update
@@ -430,7 +635,7 @@ export class Kachaka {
         this.#forward(dt);
         break;
       default:
-        this.v = approach(this.v, 0, LINEAR_ACC * dt);
+        this.v = approach(this.v, 0, LINEAR_ACC * 2 * dt);
         this.w = approach(this.w, 0, ANGULAR_ACC * dt);
     }
     this.yaw = wrapAngle(this.yaw + this.w * dt);
@@ -441,9 +646,14 @@ export class Kachaka {
     if (this.mode === "forward") this.forwardRemaining -= step;
     this.odometer += Math.abs(step);
 
-    // battery (discharge while active, charge on the dock)
-    if (this.onCharger) this.battery = Math.min(100, this.battery + dt * (6 / 60));
-    else this.battery = Math.max(5, this.battery - dt * ((Math.abs(this.v) > 0.01 ? 7 : 2) / 3600) * (this.shelf ? 1.25 : 1));
+    // battery: the demo boost speeds up both charging and discharging
+    const boost = this.settings.batteryBoost;
+    if (this.onCharger) this.battery = Math.min(100, this.battery + (dt * BATTERY.chargeRate * boost) / 3600);
+    else {
+      const moving = Math.abs(this.v) > 0.01 || Math.abs(this.w) > 0.05;
+      const rate = (moving ? BATTERY.drainMove : BATTERY.drainIdle) * (this.shelf ? BATTERY.loadFactor : 1);
+      this.battery = Math.max(2, this.battery - (dt * rate * boost) / 3600);
+    }
 
     // wheels: v +/- w*track/2
     for (const wh of this.wheels) {
@@ -481,6 +691,50 @@ export class Kachaka {
     return dist;
   }
 
+  // waypoint bookkeeping: run pass hooks once, abort at safe points, hold at closed gates
+  #atWaypoint(p) {
+    if (!p.reached) {
+      p.reached = true;
+      if (p.pass) p.pass();
+    }
+    if (p.safe && !p.open && this.abortFn && this.abortFn()) {
+      this.#abortPath();
+      return false;
+    }
+    if (p.gate && !p.open) {
+      if (p.gate()) {
+        p.open = true;
+        this.waitInfo = null;
+      } else {
+        this.waitInfo = { kind: "zone", label: `等待 ${this.traffic.name(p.gateZone)} 淨空` };
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // look ahead for a closed gate: try it early (no stop if the zone is free), else plan to stop there
+  #gateDistance(dFirst) {
+    let acc = dFirst;
+    let px = this.path[this.pathIndex].x;
+    let pz = this.path[this.pathIndex].z;
+    for (let i = this.pathIndex; i < this.path.length && acc < 3.2; i++) {
+      const q = this.path[i];
+      if (i > this.pathIndex) {
+        acc += Math.hypot(q.x - px, q.z - pz);
+        px = q.x;
+        pz = q.z;
+      }
+      if (!q.gate || q.open) continue;
+      if (!(this.abortFn && this.abortFn()) && q.gate()) {
+        q.open = true;
+        continue;
+      }
+      return acc;
+    }
+    return Infinity;
+  }
+
   #followPath(dt) {
     if (this.hold) {
       this.v = approach(this.v, 0, LINEAR_ACC * 2 * dt);
@@ -505,6 +759,11 @@ export class Kachaka {
     const d = Math.hypot(dx, dz);
     const last = this.pathIndex === this.path.length - 1;
     if (d < (last ? 0.012 : 0.06)) {
+      if (!this.#atWaypoint(p)) {
+        this.v = approach(this.v, 0, LINEAR_ACC * 2 * dt);
+        this.w = approach(this.w, 0, ANGULAR_ACC * dt);
+        return;
+      }
       if (last) {
         this.x = p.x;
         this.z = p.z;
@@ -519,7 +778,7 @@ export class Kachaka {
       this.w = Math.abs(this.v) < 0.03 ? approach(this.w, wt, ANGULAR_ACC * dt) : 0;
       return;
     }
-    const stop = this.#stopDistance();
+    const stop = Math.min(this.#stopDistance(), this.#gateDistance(d));
     const vAllow = Math.sqrt(2 * LINEAR_ACC * 0.8 * Math.max(0, stop)) + 0.015;
     let vt = Math.min(this.speedLimit, vAllow) * (1 - Math.abs(err) / 0.8);
     vt *= this.#yieldFactor();
@@ -557,12 +816,38 @@ export class Kachaka {
     this.w = 0;
   }
 
-  // slow down / stop for people in front (camera + LiDAR person detection)
+  #laneClear(spotX) {
+    for (const o of this.others) {
+      if (o === this || o.floor !== this.floor || o.inElevator || Math.abs(o.v) < 0.03) continue;
+      if (Math.abs(o.z - LANES.west) > 0.3 || o.x < ELEVATOR.landingX - 0.2 || o.x > spotX + 2.2) continue;
+      if (fwd(o.yaw).x < -0.5) return false;
+    }
+    return true;
+  }
+
+  // driving along a corridor lane (has right of way over robots crossing it)
+  #onLane() {
+    const f = fwd(this.yaw);
+    if (Math.abs(f.x) < 0.9) return false;
+    return Math.abs(this.z - (f.x > 0 ? LANES.east : LANES.west)) < 0.12;
+  }
+
+  // who keeps going when two robots block each other
+  #outranks(o) {
+    const a = this.#onLane();
+    const b = o.#onLane();
+    if (a !== b) return a;
+    if (this.priority !== o.priority) return this.priority < o.priority;
+    return this.index < o.index;
+  }
+
+  // slow down / stop for people and robots ahead (camera + LiDAR detection)
   #yieldFactor() {
     if (this.mutedSensors || this.inElevator) return 1;
     const f = fwd(this.yaw);
     let factor = 1;
-    let blocker = null;
+    let person = null;
+    let robot = null;
     for (const p of this.people) {
       if (p.floor !== this.floor || p.sitting) continue;
       const rx = p.x - this.x;
@@ -573,32 +858,81 @@ export class Kachaka {
         const k = THREE.MathUtils.clamp((along - 0.75) / 0.6, 0, 1);
         if (k < factor) {
           factor = k;
-          blocker = p;
+          person = p;
+          robot = null;
+        }
+      }
+    }
+    const gap = this.settings.followGap;
+    for (const o of this.others) {
+      if (o === this || o.floor !== this.floor || o.inElevator) continue;
+      const rx = o.x - this.x;
+      const rz = o.z - this.z;
+      const along = rx * f.x + rz * f.z;
+      if (along < 0.05 || along > gap + 0.9) continue;
+      const lat = Math.abs(rx * -f.z + rz * f.x);
+      if (lat > this.halfWidth + o.radius + 0.03) continue;
+      if (o.blockedBy === this && this.#outranks(o)) continue;
+      // a stationary robot we have waited on for a while sits beside our planned line: creep past
+      if (o.mode === "idle" && this.blockedRobot === o && this.sim.time - this.blockedRobotSince > 6) continue;
+      const k = THREE.MathUtils.clamp((along - gap) / 0.7, 0, 1);
+      if (k < factor) {
+        factor = k;
+        robot = o;
+        person = null;
+      }
+    }
+    // crossing or joining a lane: let lane traffic that is about to pass go first
+    if (!this.#onLane() && Math.abs(f.z) > 0.5) {
+      for (const o of this.others) {
+        if (o === this || o.floor !== this.floor || o.inElevator || o.v < 0.05 || !o.#onLane()) continue;
+        const dz = o.z - this.z;
+        if (dz * f.z <= 0 || Math.abs(dz) > 1.6) continue;
+        if (Math.abs(dz) < this.radius + o.radius + 0.02) continue; // already in its lane: committed
+        const ahead = (this.x - o.x) * Math.sign(fwd(o.yaw).x);
+        if (ahead > -0.6 && ahead < 1.8) {
+          factor = 0;
+          robot = o;
+          person = null;
         }
       }
     }
     const blocked = factor < 0.05;
-    if (blocked && !this.blocked) {
-      this.blockedSince = this.sim.time;
-      emit("log", { tag: "nav", html: `偵測到 PERSON（${blocker.roleDef.label}）於前方 ${(Math.hypot(blocker.x - this.x, blocker.z - this.z)).toFixed(1)} m，減速禮讓` });
+    if (robot && blocked) {
+      if (this.blockedRobot !== robot) {
+        this.blockedRobot = robot;
+        this.blockedRobotSince = this.sim.time;
+      }
+      if (this.sim.time - this.lastFollowLog > 20) {
+        this.lastFollowLog = this.sim.time;
+        emit("log", { tag: "traffic", robot: this, html: `前方 ${robot.id} 距離 ${Math.hypot(robot.x - this.x, robot.z - this.z).toFixed(1)} m，跟車禮讓` });
+      }
+    } else if (!blocked) this.blockedRobot = null;
+    if (person && blocked && !this.blockedPerson) {
+      emit("log", { tag: "nav", robot: this, html: `偵測到 PERSON（${person.roleDef.label}）於前方 ${Math.hypot(person.x - this.x, person.z - this.z).toFixed(1)} m，減速禮讓` });
       if (this.sim.time - this.lastYieldSpeech > 12) {
         this.lastYieldSpeech = this.sim.time;
         this.say("不好意思，借過一下。");
       }
     }
-    this.blocked = blocked;
+    this.blockedPerson = !!(person && blocked);
+    this.blockedBy = blocked ? robot : null;
+    this.yieldInfo = factor < 0.6 ? (robot ? { kind: "follow", label: `禮讓 ${robot.id}` } : person ? { kind: "person", label: "禮讓行人" } : null) : null;
     return factor;
   }
 
   // ---------------------------------------------------------- sensors
-  updateSensors(realDt, segments) {
-    this.scanTimer += realDt;
+  // every robot animates its path; the one being inspected also runs the LiDAR + detector
+  updateSensors(realDt, segmentsFn) {
     this.dashTex.offset.x -= realDt * 1.6;
-    this.ring.scale.setScalar(1 + 0.08 * Math.sin(performance.now() / 300));
+    this.ring.scale.setScalar(1 + 0.08 * Math.sin(performance.now() / 300 + this.index));
+    this.scanTimer += realDt;
     if (this.scanTimer < 1 / 15) return;
     this.scanTimer = 0;
     this.#updatePathMesh(false);
-    this.#lidar(segments);
+    this.scanPoints.visible = this.scanFan.visible = this.detailed;
+    if (!this.detailed) return;
+    this.#lidar(segmentsFn(this));
     this.#detect();
   }
 
@@ -614,7 +948,11 @@ export class Kachaka {
     fan[1] = y - 0.06;
     fan[2] = oz;
     let nearest = L.range;
-    const circles = this.people.filter((p) => p.floor === this.floor).map((p) => [p.x, p.z, 0.2]);
+    const circles = [];
+    if (!this.inElevator) {
+      for (const p of this.people) if (p.floor === this.floor) circles.push([p.x, p.z, 0.2]);
+      for (const o of this.others) if (o !== this && o.floor === this.floor && !o.inElevator) circles.push([o.x, o.z, o.radius - 0.04]);
+    }
     for (let i = 0; i < L.rays; i++) {
       const a = this.yaw - L.fov / 2 + (i * L.fov) / (L.rays - 1);
       const dx = Math.cos(a);
@@ -646,7 +984,6 @@ export class Kachaka {
       fan[(i + 1) * 3 + 2] = hz;
     }
     this.scan.nearest = nearest;
-    this.scan.yaw = this.yaw;
     this.scanGeo.attributes.position.needsUpdate = true;
     this.fanGeo.attributes.position.needsUpdate = true;
     const visible = !this.mutedSensors || this.inElevator;
@@ -668,8 +1005,8 @@ export class Kachaka {
     };
     if (!this.inElevator) {
       for (const p of this.people) if (p.floor === this.floor) consider("PERSON", p.x, p.z, p.roleDef.label);
-      for (const s of this.obstacleFn()) if (s.floor === this.floor && s !== this.shelf) consider("SHELF", s.x, s.z, s.id);
-      if (this.floor === 0) consider("CHARGER", -1.4, -4.8);
+      for (const o of this.others) if (o !== this && o.floor === this.floor && !o.inElevator) consider("ROBOT", o.x, o.z, o.id);
+      for (const s of this.obstacleFn ? this.obstacleFn() : []) if (s.floor === this.floor && s !== this.shelf && !s.robot) consider("SHELF", s.x, s.z, s.id);
       for (const x of [-6.75, -2.25, 2.25, 6.75]) consider("DOOR", x, CORRIDOR.minZ);
     }
     out.sort((a, b) => a.distance - b.distance);
@@ -686,7 +1023,7 @@ export class Kachaka {
       return;
     }
     const pts = [{ x: this.x, z: this.z }, ...remaining];
-    const y = this.floor * FLOOR_GAP + 0.03;
+    const y = this.floor * FLOOR_GAP + 0.03 + this.index * 0.002;
     const pos = this.pathGeo.attributes.position.array;
     const uv = this.pathGeo.attributes.uv.array;
     const hw = 0.035;
@@ -729,7 +1066,14 @@ export class Kachaka {
     this.hold = false;
     this.mutedSensors = false;
     this.onCharger = onCharger;
-    this.blocked = false;
+    this.blockedBy = null;
+    this.blockedRobot = null;
+    this.waitInfo = null;
+    this.yieldInfo = null;
+    this.insideZone = null;
+    this.zoneVia = [];
+    this.zoneViaPassed = 0;
+    this.parked = null;
     this.y = floor * FLOOR_GAP;
     this.#updatePathMesh(true);
     this.#sync();
@@ -737,6 +1081,13 @@ export class Kachaka {
 
   anchor(target) {
     return target.set(this.x, this.y + (this.shelf ? 1.25 : 0.55), this.z);
+  }
+
+  dispose() {
+    this.dashTex.dispose();
+    this.pathGeo.dispose();
+    this.scanGeo.dispose();
+    this.fanGeo.dispose();
   }
 }
 

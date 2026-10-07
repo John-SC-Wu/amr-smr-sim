@@ -7,10 +7,12 @@ const W = 0.42; // Kachaka shelf footprint (m)
 
 // --- furniture that Kachaka docks under and carries (smart-furniture platform) ---
 class DockableShelf {
-  constructor({ id, name, home }) {
+  constructor({ id, name, home, loadSpot = null }) {
     this.id = id;
     this.name = name;
     this.home = { ...home, id, name };
+    this.loadSpot = loadSpot; // where staff stand to load it at home
+    this.reservedBy = null; // task holding this piece of furniture
     this.floor = home.floor;
     this.x = home.x;
     this.z = home.z;
@@ -53,7 +55,8 @@ class DockableShelf {
   }
 
   pose() {
-    return { floor: this.floor, x: this.x, z: this.z, yaw: this.yaw, via: this.atHome() ? this.home.via : [], id: this.id, name: this.name };
+    const home = this.atHome();
+    return { floor: this.floor, x: this.x, z: this.z, yaw: this.yaw, via: home ? this.home.via : [], zone: home ? this.home.zone : null, id: this.id, name: this.name };
   }
 
   atHome() {
@@ -89,6 +92,7 @@ class DockableShelf {
 
   resetHome() {
     this.robot = null;
+    this.reservedBy = null;
     this.place(this.home.floor, this.home.x, this.home.z, this.home.yaw);
   }
 

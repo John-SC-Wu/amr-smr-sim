@@ -5,22 +5,39 @@ import { damp } from "./sim.js";
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// --- auto-director: follows the robot, frames the elevator ride and bedside measurements ---
+// how much a robot's current activity is worth watching (auto-director)
+function interest(r) {
+  if (r.focusPerson) return 92;
+  const k = r.activity.kind;
+  if (k === "alert") return 100;
+  if (k === "handoff") return 72;
+  if (k === "measure") return 66;
+  if (r.inElevator) return 58;
+  if (k === "dock") return 46;
+  if (k === "patrol") return 42;
+  if (k === "lift") return 30;
+  if (k === "move") return r.shelf ? 40 : 34;
+  if (k === "charge") return 6;
+  return 2;
+}
+
+// --- auto-director: frames the most interesting robot, the elevator ride and bedside work ---
 export class CameraDirector {
-  constructor(camera, dom, { robot, elevator, sensor }) {
+  constructor(camera, dom, { fleet, elevator }) {
     this.camera = camera;
-    this.robot = robot;
+    this.fleet = fleet;
     this.elevator = elevator;
-    this.sensor = sensor;
-    this.mode = "auto";
-    this.intro = 2.6; // seconds of establishing shot before following the robot
+    this.mode = "auto"; // auto | follow | overview | free
+    this.selected = null; // robot picked by the user (follow mode)
+    this.focusRobot = null; // robot currently framed
+    this.hold = 0;
+    this.intro = 2.6; // seconds of establishing shot before the first robot
     this.t = 0;
     this.cur = { target: new THREE.Vector3(-1.2, 6.4, 0), dist: 34, azim: 0.5, elev: 0.36 };
     this.want = { target: new THREE.Vector3(), dist: 0, azim: 0, elev: 0 };
     this.tmp = new THREE.Vector3();
-    this.tmp2 = new THREE.Vector3();
-    this.focus = null; // a person the robot is interacting with; framed together with the robot
     this.onModeChange = () => {};
+    this.onFocusChange = () => {};
 
     this.controls = new OrbitControls(camera, dom);
     this.controls.enableDamping = true;
@@ -36,10 +53,23 @@ export class CameraDirector {
 
   setMode(mode) {
     if (this.mode === mode) return;
+    if (mode === "follow" && !this.selected) this.selected = this.focusRobot;
     this.mode = mode;
     this.intro = 0;
+    if (mode === "auto") this.selected = null;
     if (mode !== "free") this.#syncFromCamera();
     this.onModeChange(mode);
+  }
+
+  follow(robot) {
+    this.selected = robot;
+    this.hold = 0;
+    if (this.mode === "follow") this.onModeChange(this.mode);
+    else this.setMode("follow");
+    if (this.focusRobot !== robot) {
+      this.focusRobot = robot;
+      this.onFocusChange(robot);
+    }
   }
 
   // keep the spherical state continuous when leaving free mode
@@ -56,11 +86,51 @@ export class CameraDirector {
     return a < 1 ? Math.min(1.9, Math.pow(1 / a, 0.85)) : a > 2.1 ? 0.92 : 1;
   }
 
+  #pick(realDt) {
+    const robots = this.fleet.robots;
+    if (!robots.length) return null;
+    if (this.selected && !robots.includes(this.selected)) this.selected = null;
+    if (this.mode === "follow" && this.selected) return this.selected;
+    const cur = robots.includes(this.focusRobot) ? this.focusRobot : null;
+    this.hold += realDt;
+    let best = null;
+    let bestScore = -1;
+    for (const r of robots) {
+      const s = interest(r);
+      if (s > bestScore) {
+        best = r;
+        bestScore = s;
+      }
+    }
+    if (!cur) {
+      this.hold = 0;
+      return best;
+    }
+    const mine = interest(cur);
+    if (best !== cur && bestScore >= mine + 30) {
+      this.hold = 0;
+      return best;
+    }
+    // when nothing stands out, move on to another busy robot now and then
+    if (this.hold > 14 && mine < 60) {
+      const busy = robots.filter((r) => r !== cur && interest(r) >= 30);
+      if (busy.length) {
+        this.hold = 0;
+        busy.sort((a, b) => interest(b) - interest(a));
+        return busy[0];
+      }
+    }
+    return cur;
+  }
+
   #shot() {
     const w = this.want;
-    const r = this.robot;
+    const r = this.focusRobot;
     const drift = reducedMotion ? 0 : Math.sin(this.t * 0.045) * 0.12;
-    const mode = this.intro > 0 ? "overview" : this.mode;
+    // nothing worth a close-up (everyone parked): show the whole building and fleet
+    const quiet = this.mode === "auto" && r && interest(r) < 20;
+    const mode = this.intro > 0 || !r || quiet ? "overview" : this.mode;
+    this.closeUp = mode !== "overview" && !r.inElevator;
     if (mode === "overview") {
       w.target.set(-1.3, 6.3, 0);
       w.dist = 33 * this.aspectFactor;
@@ -75,7 +145,7 @@ export class CameraDirector {
       w.elev = 0.3;
       return;
     }
-    const f = this.focus;
+    const f = r.focusPerson;
     if (f && f.floor === r.floor) {
       // look across the robot-person line so neither hides the other
       const d = Math.hypot(f.x - r.x, f.z - r.z);
@@ -87,9 +157,9 @@ export class CameraDirector {
       w.elev = 0.8;
       return;
     }
-    const s = this.sensor;
-    if (r.activity.kind === "measure" && s.bed && s.state !== "idle") {
-      const c = s.chestWorld(this.tmp2);
+    const s = this.fleet.sensorOf ? this.fleet.sensorOf(r) : null;
+    if (r.activity.kind === "measure" && s && s.bed && s.state !== "idle") {
+      const c = s.chestWorld(this.tmp);
       w.target.set((r.x + c.x) / 2, r.y + 0.7, (r.z + c.z) / 2 + 0.3);
       w.dist = 4.6 * this.aspectFactor;
       w.azim = 0.22 + drift * 0.4;
@@ -104,9 +174,14 @@ export class CameraDirector {
     w.elev = 0.62;
   }
 
-  // jump straight to the current shot (used after scenario jumps / for screenshots)
+  // jump straight to the current shot (used after restarts / for screenshots)
   snap() {
     this.intro = 0;
+    const r = this.#pick(0);
+    if (r !== this.focusRobot) {
+      this.focusRobot = r;
+      this.onFocusChange(r);
+    }
     this.#shot();
     this.cur.target.copy(this.want.target);
     this.cur.dist = this.want.dist;
@@ -118,6 +193,11 @@ export class CameraDirector {
   update(realDt) {
     this.t += realDt;
     if (this.intro > 0) this.intro -= realDt;
+    const r = this.#pick(realDt);
+    if (r !== this.focusRobot) {
+      this.focusRobot = r;
+      this.onFocusChange(r);
+    }
     if (this.mode === "free") {
       this.controls.update();
       return;
@@ -146,12 +226,20 @@ export class CameraDirector {
     this.controls.target.copy(target);
   }
 
-  // cut-away: floors above the robot fade out so its floor stays visible
+  // floor whose slab hides everything below it in the current close-up (-1: nothing hidden)
+  get occludeBelow() {
+    const r = this.focusRobot;
+    if (this.mode === "free" || !this.closeUp || !r) return -1;
+    return r.floor;
+  }
+
+  // cut-away: floors above the framed robot fade out so its floor stays visible
   floorFadeTargets() {
-    const r = this.robot;
+    const r = this.focusRobot;
+    const overview = this.mode === "overview" || this.intro > 0 || !r;
+    if (!r) return FLOORS.map(() => 1);
     let active = r.floor;
     if (r.inElevator) active = Math.max(Math.ceil(this.elevator.floorFloat - 0.05), Math.round(this.elevator.targetY / FLOOR_GAP));
-    const overview = this.mode === "overview" || this.intro > 0;
     return FLOORS.map((_, i) => (i <= active ? 1 : overview ? 0.32 : 0.06));
   }
 }

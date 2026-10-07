@@ -1,16 +1,18 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { FLOORS } from "./config.js";
-import { Sim, emit, damp } from "./sim.js";
+import { Sim, damp } from "./sim.js";
+import { settings } from "./settings.js";
 import { Hospital } from "./hospital.js";
 import { Elevator } from "./elevator.js";
-import { Kachaka } from "./kachaka.js";
+import { LiftScheduler } from "./lift.js";
+import { Traffic } from "./traffic.js";
 import { VitalCart, MedShelf } from "./furniture.js";
 import { VitalSensor } from "./vitals.js";
 import { Person, BedPatient } from "./people.js";
 import { Labels } from "./labels.js";
 import { CameraDirector } from "./camera.js";
-import { Missions } from "./missions.js";
+import { Fleet } from "./fleet.js";
 import { Dashboard } from "./dashboard.js";
 
 document.documentElement.lang = "zh-Hant";
@@ -84,18 +86,21 @@ const sim = new Sim();
 const hospital = new Hospital();
 const elevator = new Elevator();
 scene.add(hospital.root, elevator.group);
+const traffic = new Traffic({ sim, settings });
+for (const [id, name] of hospital.zones) traffic.define(id, name);
+const lift = new LiftScheduler({ elevator, sim, settings });
 
-const shelves = {
-  vs: new VitalCart({ id: "VS-01", name: "生理量測車 VS-01", home: hospital.shelfHomes.vs }),
-  med: new MedShelf({ id: "MED-01", name: "藥品櫃 MED-01", home: hospital.shelfHomes.med }),
-};
-scene.add(shelves.vs.group, shelves.med.group);
-
-const robot = new Kachaka({ sim, elevator });
-scene.add(robot.group, robot.overlays);
-
-const sensor = new VitalSensor({ cart: shelves.vs, sim });
-scene.add(sensor.group);
+// furniture: one vital-sign cart per care floor, two medicine cabinets in the pharmacy
+const carts = {};
+const sensors = {};
+for (const [floor, home] of Object.entries(hospital.carts)) {
+  const fid = FLOORS[floor].id;
+  carts[floor] = new VitalCart({ id: `VS-${fid}`, name: `生理量測車 VS-${fid}`, home });
+  sensors[floor] = new VitalSensor({ cart: carts[floor], sim });
+  scene.add(carts[floor].group, sensors[floor].group);
+}
+const meds = hospital.medHomes.map((m) => new MedShelf({ id: m.id, name: `藥品櫃 ${m.id}`, home: m.home, loadSpot: m.load }));
+for (const m of meds) scene.add(m.group);
 
 const S = hospital.staffSpots;
 const A = hospital.activitySeats;
@@ -112,12 +117,10 @@ const staff = {
   "3F-nurseA": new Person({ id: "3F-nurseA", role: "nurse", name: "護理師 雅婷", ...S["3F-staffA"], pose: "type" }),
   "3F-nurseB": new Person({ id: "3F-nurseB", role: "nurseB", name: "護理師 佩珊", ...S["3F-staffB"], pose: "type", skin: 2 }),
   "4F-nurseA": new Person({ id: "4F-nurseA", role: "nurse", name: "護理師 怡君", ...S["4F-staffA"], pose: "type", skin: 1 }),
-  "4F-carer": new Person({ id: "4F-carer", role: "carer", name: "照服員 美玲", ...S["4F-staffB"], pose: "type" }),
+  "4F-nurseB": new Person({ id: "4F-nurseB", role: "nurseB", name: "護理師 淑芬", ...S["4F-staffB"], pose: "type" }),
 };
 const staffList = Object.values(staff);
 for (const p of staffList) scene.add(p.group);
-robot.people = staffList;
-robot.obstacleFn = () => [shelves.vs, shelves.med];
 
 const patients = new Map();
 let skin = 0;
@@ -129,14 +132,13 @@ for (const bed of hospital.beds.values()) {
 }
 
 const labels = new Labels(document.getElementById("labels"), camera);
-const director = new CameraDirector(camera, canvas, { robot, elevator, sensor });
-const world = { sim, hospital, elevator, robot, shelves, sensor, staff, patients, labels, camera: director };
-const missions = new Missions(world);
-world.missions = missions;
+const world = { sim, settings, scene, hospital, elevator, lift, traffic, carts, sensors, meds, staff, staffList, patients, labels };
+const fleet = new Fleet(world);
+world.fleet = fleet;
+const director = new CameraDirector(camera, canvas, { fleet, elevator });
+world.camera = director;
 const dashboard = new Dashboard(world);
-
-emit("log", { tag: "api", html: "已連線 Kachaka API（gRPC :26400）・電梯系統・護理資訊系統 MQTT" });
-emit("log", { tag: "api", html: `<code>get_battery_info()</code> → ${Math.round(robot.battery)}%・充電中` });
+world.dashboard = dashboard;
 
 // --- sizing ---
 let viewW = 1;
@@ -158,11 +160,13 @@ new IntersectionObserver((entries) => (stageVisible = entries[0].isIntersecting)
 // --- per-frame helpers ---
 const fades = FLOORS.map(() => 1);
 const fadeOf = (i) => fades[i] ?? 1;
+const furniture = [...Object.values(carts), ...meds];
 
-function lidarSegments() {
+// LiDAR world for the robot being inspected: walls, parked furniture, closed landing doors
+function lidarSegments(robot) {
   if (robot.inElevator) return elevator.cabWalls(elevator.floor);
   const segs = hospital.floors[robot.floor].walls.slice();
-  for (const s of Object.values(shelves)) if (!s.robot && s.floor === robot.floor) segs.push(...s.segments());
+  for (const s of furniture) if (!s.robot && s.floor === robot.floor) segs.push(...s.segments());
   if (elevator.doors[robot.floor].open < 0.5) segs.push([-9.2, -0.62, -9.2, 0.62]);
   return segs;
 }
@@ -174,18 +178,21 @@ function updateFades(realDt) {
     if (Math.abs(fades[i] - targets[i]) < 0.01) fades[i] = targets[i];
     hospital.setFloorFade(i, Math.round(fades[i] * 50) / 50);
   }
-  for (const p of staffList) p.setFade(Math.round(fadeOf(p.floor) * 50) / 50);
-  for (const p of patients.values()) p.setFade(Math.round(fadeOf(p.floor) * 50) / 50);
-  for (const s of Object.values(shelves)) s.setFade(s.robot ? 1 : Math.round(fadeOf(s.floor) * 50) / 50);
+  const q = (i) => Math.round(fadeOf(i) * 50) / 50;
+  for (const p of staffList) p.setFade(q(p.floor));
+  for (const p of patients.values()) p.setFade(q(p.floor));
+  for (const s of furniture) s.setFade(s.robot ? (s.robot.inElevator ? 1 : q(s.robot.floor)) : q(s.floor));
+  for (const r of fleet.robots) r.setFade(r.inElevator ? 1 : q(r.floor));
 }
 
 const STEP = 0.05;
 function stepSim(h) {
   sim.time += h;
   elevator.update(h);
-  robot.update(h);
-  for (const p of staffList) p.update(h, robot);
-  sensor.updateSim(h);
+  const robots = fleet.robots;
+  for (const r of robots) r.update(h);
+  for (const p of staffList) p.update(h, robots);
+  for (const s of Object.values(sensors)) s.updateSim(h);
   sim.process();
 }
 
@@ -199,17 +206,17 @@ function frame(now) {
     for (let i = 0; i < n; i++) stepSim(simDt / n);
   }
   for (const p of patients.values()) p.update(realDt);
-  sensor.updateReal(realDt);
-  robot.updateSensors(realDt, lidarSegments());
+  for (const s of Object.values(sensors)) s.updateReal(realDt);
+  for (const r of fleet.robots) r.updateSensors(realDt, lidarSegments);
   director.update(realDt);
   updateFades(realDt);
-  labels.update(viewW, viewH, fadeOf);
+  labels.update(viewW, viewH, fadeOf, director.occludeBelow);
   dashboard.update(realDt);
   if (renderer && stageVisible && !world.renderPaused) renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
 
-missions.start();
+fleet.start();
 requestAnimationFrame(frame);
 
 // handy for poking at the scene from the console, e.g. hospitalDemo.advance(120)

@@ -10,13 +10,13 @@ export class Labels {
     this.v = new THREE.Vector3();
   }
 
-  add({ className, html, anchor, floor = null, offsetY = 0, dimWhenFaded = false }) {
+  add({ className, html, anchor, floor = null, offsetY = 0, dimWhenFaded = false, occlude = true }) {
     const el = document.createElement("div");
     el.className = `lbl ${className}`;
     el.innerHTML = html;
     el.style.opacity = "0";
     this.container.appendChild(el);
-    const item = { el, anchor, floor, offsetY, dimWhenFaded, hidden: false, expires: 0 };
+    const item = { el, anchor, floor, offsetY, dimWhenFaded, occlude, hidden: false, expires: 0 };
     this.items.add(item);
     return item;
   }
@@ -27,11 +27,12 @@ export class Labels {
   }
 
   // one bubble per speaker; a new line replaces the previous one
-  bubble(key, { anchor, floor, text, kind, name }) {
+  bubble(key, { anchor, floor, text, kind, name, color = null }) {
     const prev = this.bubbles.get(key);
     if (prev) this.remove(prev);
     const item = this.add({ className: "lbl-bubble", html: `<small>${name}</small>${text}`, anchor, floor, offsetY: -12 });
     item.el.dataset.kind = kind;
+    if (color) item.el.style.setProperty("--rc", color);
     item.expires = performance.now() + Math.max(2800, text.length * 170);
     item.key = key;
     this.bubbles.set(key, item);
@@ -42,7 +43,8 @@ export class Labels {
     this.bubbles.clear();
   }
 
-  update(width, height, fadeOf) {
+  // occludeBelow: in close-up shots, floors under the framed one are hidden by its slab
+  update(width, height, fadeOf, occludeBelow = -1) {
     const now = performance.now();
     const bubbles = [];
     for (const item of this.items) {
@@ -67,7 +69,8 @@ export class Labels {
       const off = this.v.z > 1 || x < -60 || x > width + 60 || y < -20 || y > height + 80;
       const floor = typeof item.floor === "function" ? item.floor() : item.floor;
       item.faded = floor !== null && fadeOf(floor) <= 0.5;
-      item.vis = !off && (!item.faded || item.dimWhenFaded);
+      const occluded = item.occlude && floor !== null && floor < occludeBelow;
+      item.vis = !off && !occluded && (!item.faded || item.dimWhenFaded);
       item.px = x;
       item.py = y;
       if (item.vis && item.expires) bubbles.push(item);

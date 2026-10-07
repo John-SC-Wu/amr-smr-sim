@@ -222,9 +222,10 @@ export class Elevator {
     await sim.until(() => this.doors[floor].open <= 0, token);
   }
 
-  async #moveTo(floor, sim, token) {
+  // the cab only moves with every landing door shut (see LiftScheduler)
+  async moveTo(floor, sim, token) {
     this.targetY = floor * FLOOR_GAP;
-    if (Math.abs(this.targetY - this.cabY) < 0.003) return;
+    if (Math.abs(this.targetY - this.cabY) < 0.003 && !this.moving) return;
     this.moving = true;
     emit("elevator", { kind: "depart", from: this.floor, to: floor });
     await sim.until(() => !this.moving, token);
@@ -232,25 +233,8 @@ export class Elevator {
     emit("elevator", { kind: "arrive", floor });
   }
 
-  // bring the cab to `floor` and open the doors there
-  async callTo(floor, sim, token) {
-    this.calls[floor] = true;
-    try {
-      if (this.floor !== floor || this.moving) {
-        await this.closeDoors(this.floor, sim, token);
-        await this.#moveTo(floor, sim, token);
-      }
-      await this.openDoors(floor, sim, token);
-    } finally {
-      this.calls[floor] = false;
-    }
-  }
-
-  // ride from the current floor to `floor` (doors close, travel, open)
-  async travel(floor, sim, token) {
-    await this.closeDoors(this.floor, sim, token);
-    await this.#moveTo(floor, sim, token);
-    await this.openDoors(floor, sim, token);
+  anyDoorOpen() {
+    return this.doors.some((d) => d.open > 0.001 || d.target > 0);
   }
 
   reset(floor = 0) {
